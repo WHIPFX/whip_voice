@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>whip_voice</title>
+<!-- whip_core's faces only (Barlow, Bricolage: @font-face rules, nothing styled), as the rest of whip uses -->
+<link rel="stylesheet" href="https://cfx-nui-whip_core/html/css/fonts.css">
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  /* The 3D radio (js/walkie.js): bottom right, flush with the bottom of the screen (the model is cut
+     off there, as if held up from below), with room either side for it to turn. Its size and place
+     are this CSS only; the radio follows. Seen only while open and sliding away (walkie-shown, from
+     js/walkie.js), and only takes clicks while open. Hidden by visibility, not display: its size must
+     not change, or the radio would resize its drawing each time.
+     81.25% of the screen's height (Josh, 4 Oct 2026: the module's 52%, a quarter bigger, then a quarter
+     bigger again). */
+  #walkie { position: fixed; right: 2vw; bottom: 0; height: 81.25vh; aspect-ratio: 0.58; display: block;
+            touch-action: none; pointer-events: none; visibility: hidden; }
+  body.walkie-shown #walkie { visibility: visible; }
+  body.walkie-open #walkie { pointer-events: auto; }
+
+  /* ON A CONTROLLER, ITS BUTTONS (Josh, 9 Oct 2026; js/walkie.js padPress): whip's pad hint strip, drawn the
+     way whip_core draws its own (html/css/ui.css #pad-hints), with whip_core's Xbox glyphs and font, but
+     beside the radio rather than in the middle: centred, it covered the radio on a 4:3 screen. Its right
+     edge is the radio's left (2vw + the canvas's 81.25vh x 0.58 = 47.125vh) plus a gap; on a narrow screen
+     it wraps onto a second row. Only while the radio is up and a pad is the device. The tokens are
+     whip_core/html/css/base.css's, restated (this frame cannot load it). The font is whip_core's Barlow (fonts.css,
+     linked above): the old Plus Jakarta files are going (audit 20, DX-8). */
+  :root { --ui-surface: rgba(10, 12, 18, 0.75); --ui-border: rgba(255, 255, 255, 0.08);
+          --ui-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+          --ui-text: rgba(255, 255, 255, 0.93); --ui-font: 'Barlow', 'Segoe UI', sans-serif;
+          --ui-ease: cubic-bezier(0.16, 1, 0.3, 1); }
+  #walkie-pad { position: fixed; right: calc(2vw + 47.125vh + 24px); bottom: 28px; transform: translateY(6px);
+                max-width: calc(100vw - 2vw - 47.125vh - 48px); display: flex; flex-wrap: wrap;
+                justify-content: flex-end; align-items: center; gap: 8px 20px; padding: 8px 18px;
+                background: var(--ui-surface); border: 1px solid var(--ui-border); border-radius: 20px;
+                box-shadow: var(--ui-shadow); font-family: var(--ui-font); font-size: 14px; font-weight: 600;
+                color: var(--ui-text); box-sizing: border-box; pointer-events: none; opacity: 0; visibility: hidden;
+                transition: opacity 0.2s var(--ui-ease), transform 0.2s var(--ui-ease), visibility 0s 0.2s; }
+  body.walkie-open.walkie-pad #walkie-pad { opacity: 1; visibility: visible; transform: translateY(0);
+                transition: opacity 0.2s var(--ui-ease), transform 0.2s var(--ui-ease); }
+  #walkie-pad .hint { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  #walkie-pad img { height: 24px; width: auto; }
+  #walkie-pad img + img { margin-left: -4px; }
+</style>
+<!-- three.js for the 3D radio (radio3d/, three r170, kept on the server: no internet needed). -->
+<script type="importmap">{ "imports": { "three": "./radio3d/lib/build/three.module.min.js", "three/addons/": "./radio3d/lib/examples/jsm/" } }</script>
+</head>
+<body>
+<!-- The page carries the voices (nothing to see). The one thing shown: the 3D radio, while the radio
+     item is being used (js/walkie.js). -->
+<canvas id="walkie"></canvas>
+<div id="walkie-pad" aria-hidden="true">
+  <span class="hint"><img src="https://cfx-nui-whip_core/html/img/pad/a.svg" alt="">Power</span>
+  <span class="hint"><img src="https://cfx-nui-whip_core/html/img/pad/dpad_up.svg" alt=""><img src="https://cfx-nui-whip_core/html/img/pad/dpad_down.svg" alt="">Channel</span>
+  <span class="hint"><img src="https://cfx-nui-whip_core/html/img/pad/dpad_left.svg" alt=""><img src="https://cfx-nui-whip_core/html/img/pad/dpad_right.svg" alt="">Volume</span>
+  <span class="hint"><img src="https://cfx-nui-whip_core/html/img/pad/rb.svg" alt="">Talk</span>
+  <span class="hint"><img src="https://cfx-nui-whip_core/html/img/pad/x.svg" alt="">Speaker</span>
+  <span class="hint"><img src="https://cfx-nui-whip_core/html/img/pad/y.svg" alt="">Beeps</span>
+  <span class="hint"><img src="https://cfx-nui-whip_core/html/img/pad/b.svg" alt="">Put away</span>
+</div>
+<script src="js/vendor/livekit-client.umd.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/fx.js"></script>
+<script src="js/lines.js"></script>
+<script src="js/radio.js"></script>
+<script src="js/voice.js"></script>
+<script type="module" src="js/walkie.js"></script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+# ============================================
+# LiveKit - the voice server whip_voice talks through
+# ============================================
+#
+# install.ps1 writes this file to C:\LiveKit\config.yaml for you, with your server's public IP filled
+# in. You only need to read it if you want to change something. Restart the "LiveKit" Windows service
+# after any change.
+#
+# What talks to what:
+#   players' games    -> wss://voice.<your domain> -> Caddy (HTTPS) -> this server on 127.0.0.1:7880
+#   players' games    -> UDP 7882-7893 (TCP 7881 as a fallback) -> this server, for the actual audio
+#   your FiveM server -> http://127.0.0.1:7880 -> this server (room management)
+
+# The signalling port. Only Caddy and the FiveM server reach it, both on this machine, so it listens
+# on localhost only and needs no firewall rule.
+port: 7880
+bind_addresses:
+  - 127.0.0.1
+
+rtc:
+  # Voice travels over UDP on these ports. They must be open inbound in the Windows firewall (and in
+  # your host's network firewall, if it has one). A small range, one port per CPU thread, well below
+  # Windows' own dynamic ports (49152 and up).
+  udp_port: 7882-7893
+  # A fallback for players whose network blocks UDP. Works, but audio over TCP can stall on packet loss.
+  tcp_port: 7881
+  # Tell players to send audio to this address. install.ps1 fills in your server's public IPv4.
+  use_external_ip: false
+  node_ip: __PUBLIC_IP__
+
+# The API key and its secret. The FiveM server needs the same pair (server.cfg: whip_voice_key and
+# whip_voice_secret). install.ps1 makes a random pair and locks this file so only Administrators and the
+# service can read it. Never paste this file anywhere with the secret still in it.
+# (LiveKit's separate `key_file` option cannot work on Windows: it demands Unix file permissions.)
+keys:
+  __API_KEY__: __API_SECRET__
+
+room:
+  # Only the FiveM server creates rooms. A player's token cannot conjure one.
+  auto_create: false
+  empty_timeout: 300
+  departure_timeout: 20
+  # (No codec list here: a restricted list broke the browser's connection setup in testing. Players
+  # can publish a microphone and nothing else anyway - that is written into each player's token.)
+
+logging:
+  level: info
