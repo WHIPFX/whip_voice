@@ -209,9 +209,11 @@ local SEARCH_FROM = 3.0                 -- a search going on is started again wh
 -- the far side of the voice: walk past a gap and back, and the sound still went out to the corner left behind and
 -- back again (152 degrees, from the wrong side), flicking to clear and back each time the straight line grazed a post
 -- (Josh, 14 Nov 2026). So it is forgotten once the voice is in sight, followed only within KEEP_MOVE of where it was
--- found, and never when it bends back on itself (SHARP): past those it is looked for again from where the listener is.
+-- found, and never when it bends back on itself at the corner the listener sees (SHARP): past those it is looked for
+-- again from where the listener is. (Its bends further on do not count: two right angles round a block are a way, not
+-- a way back, and looking again every pass for such a way left music's second way no search of its own.)
 local KEEP_MOVE = 5.0                   -- metres from where a way was found that it is still followed
-local SHARP = 120                       -- degrees of bend past which a followed way is looked for again
+local SHARP = 120                       -- degrees of bend at its first corner past which a followed way is looked for again
 -- MUSIC IS HEARD BY TWO WAYS AT ONCE (Josh, 14 Nov 2026: one way can come from one direction only, so when the best way
 -- moved to another gap the sound jumped from behind to in front). Round a real corner, music also takes the best way
 -- through ANOTHER opening (a search that keeps clear of the first way's corner), and the page plays both from their
@@ -307,9 +309,7 @@ local function lineOf(id, from, to, own, range, pass)
         local f = Ways.follow(r.way, from, to, own, closeRays)
         if f == nil then return answer(lastHere() or true, false) end   -- (no rays left this pass)
         if f then
-            local bend = 0
-            for _, t in ipairs(f.turns) do bend = bend + t end
-            if bend <= SHARP then return answer(f, true) end
+            if (f.turns[1] or 0) <= SHARP then return answer(f, true) end
             sharp = f
         end
     end
