@@ -22,13 +22,19 @@ local JOIN_WAIT_MS = 20000
 local joined = false     -- in the voice room
 local lastError = nil    -- why the last join failed or the connection went, for /voicecheck
 local heard = {}         -- [identity] = server id of the player that voice belongs to, or { ent = netId } (a world voice)
+                         -- A world voice heard from several places (speakers) is one entry per place, '<identity>#<n>':
+                         -- { ent = netId } or { at = { x, y, z }, model } (a fixed spot), the page playing its one track
+                         -- at each.
 local heardRange = {}    -- [identity] = how far that voice carries (metres), from the server
-local heardFx = {}       -- [identity] = its effect ('megaphone'), from the server: a megaphone gets through cars
+local heardFx = {}       -- [identity] = its effect ('megaphone', or a sound recipe), from the server: either gets through cars
+local heardMu = {}       -- [identity] = true for music (a world voice made with `music`): heard by two ways round corners
+local placesOf = {}      -- [identity] = { '<identity>#1', ... }: the places of a voice heard from several
 local talkers = {}       -- [identity] = true while the page hears them talking
 local anyTalkers = false
 local live = {}          -- [identity] = true while that speaker holds push-to-talk (the page says)
 local anyLive = false
 local pedOf = {}         -- [identity] = the ped that voice comes from, as last found (nil = not in this game)
+local atOf = {}          -- [identity] = { x, y, z }: where that voice comes from, as last placed (nil = not placed)
 local envCache = {}      -- [identity] = how that voice travels, as last worked out
 local envAt = {}         -- [identity] = when that was (nil = at the next chance)
 
@@ -59,11 +65,12 @@ end)
 
 --- Forget everything about the voices heard (the connection dropped).
 local function forgetVoices()
-    heard, heardRange, heardFx, talkers, anyTalkers = {}, {}, {}, {}, false
+    heard, heardRange, heardFx, talkers, anyTalkers, placesOf = {}, {}, {}, {}, false, {}
+    heardMu = {}
     live, anyLive = {}, false
     envCache, envAt = {}, {}
-    pedOf = {}
-    VoicePeds = pedOf
+    pedOf, atOf = {}, {}
+    VoicePeds, VoiceAt = pedOf, atOf
     sayEntsTalking()
 end
 
@@ -481,17 +488,39 @@ end)
 local poseRunning = false
 local startPose
 
+--- Forget one heard voice (or one place of a voice heard from several).
+local function forgetHeard(id)
+    heard[id], heardRange[id], heardFx[id], talkers[id], live[id] = nil, nil, nil, nil, nil
+    heardMu[id] = nil
+    pedOf[id], atOf[id], envCache[id], envAt[id] = nil, nil, nil, nil
+end
+
 RegisterNetEvent('whip_voice:client:hear', function(msg)
     if type(msg) ~= 'table' then return end
     -- A player's voice comes from their server id; a world voice (a lore character, server/bots.lua) from an
-    -- entity's network id.
+    -- entity's network id, or from several places (`pts`: speakers), each heard as a voice of its own.
     for _, e in ipairs(msg.add or {}) do
-        heard[e.id] = e.ent and { ent = e.ent } or e.src
-        heardRange[e.id], heardFx[e.id] = e.range, e.fx
+        if type(e.pts) == 'table' then
+            -- Told again (a new sound, a new range, places changed): its places afresh.
+            for _, pid in ipairs(placesOf[e.id] or {}) do forgetHeard(pid) end
+            local list = {}
+            for i, p in ipairs(e.pts) do
+                local pid = e.id .. '#' .. i
+                heard[pid] = p.ent and { ent = p.ent, off = p.off, model = p.off and p.model or nil }
+                    or { at = p.at, model = p.model }
+                heardRange[pid], heardFx[pid], heardMu[pid] = e.range, e.fx, e.mu == true or nil
+                list[i] = pid
+            end
+            placesOf[e.id] = list
+        else
+            heard[e.id] = e.ent and { ent = e.ent } or e.src
+            heardRange[e.id], heardFx[e.id], heardMu[e.id] = e.range, e.fx, e.mu == true or nil
+        end
     end
     for _, id in ipairs(msg.remove or {}) do
-        heard[id], heardRange[id], heardFx[id], talkers[id], live[id] = nil, nil, nil, nil, nil
-        pedOf[id], envCache[id], envAt[id] = nil, nil, nil
+        forgetHeard(id)
+        for _, pid in ipairs(placesOf[id] or {}) do forgetHeard(pid) end
+        placesOf[id] = nil
     end
     anyTalkers, anyLive = next(talkers) ~= nil, next(live) ~= nil
     if msg.remove and #msg.remove > 0 then sayEntsTalking() end
@@ -564,10 +593,42 @@ local function faces(now, speakers)
     facing = talkingPeds
 end
 
+--- The object standing at a fixed spot (a world voice's place: { at, model }), as this game has its own copy of it
+--- (a prop set's prop): kept while it is still there, looked for again when it is not. nil when there is none.
+local function objectAt(src)
+    if not src.model then return nil end
+    local o = src.obj
+    if o and DoesEntityExist(o) then return o end
+    o = GetClosestObjectOfType(src.at[1] + 0.0, src.at[2] + 0.0, src.at[3] + 0.0, 1.5, src.model, false, false, false)
+    src.obj = o ~= 0 and o or nil
+    return src.obj
+end
+
+--- Where the sound comes from on an object: the middle of its model's box.
+local function middleOf(ent)
+    local lo, hi = GetModelDimensions(GetEntityModel(ent))
+    return GetOffsetFromEntityInWorldCoords(ent, (lo.x + hi.x) / 2, (lo.y + hi.y) / 2, (lo.z + hi.z) / 2)
+end
+
+--- A place riding an entity (`off`: a spot on it, where an object of `model` rides it — a speaker on a car's roof):
+--- that spot in the world now, and the object there (this game's own copy, attached), or nil. The object is kept
+--- while it is still there and still on the spot, and looked for again when it is not.
+local function ridingAt(ent, src)
+    local o = src.off
+    local spot = GetOffsetFromEntityInWorldCoords(ent, o[1] + 0.0, o[2] + 0.0, o[3] + 0.0)
+    if not src.model then return spot, nil end
+    local obj = src.obj
+    if obj and DoesEntityExist(obj) and #(GetEntityCoords(obj) - spot) < 1.5 then return spot, obj end
+    obj = GetClosestObjectOfType(spot.x, spot.y, spot.z, 1.5, src.model, false, false, false)
+    src.obj = obj ~= 0 and obj or nil
+    return spot, src.obj
+end
+
 --- The ped a heard player's voice comes from, or nil when this game has not got them (out of scope). A world
---- voice's ({ ent = netId }): that entity, while this game has it.
+--- voice's ({ ent = netId }): that entity, while this game has it. A fixed spot's ({ at, model }): the object there.
 local function pedFor(src)
     if type(src) == 'table' then
+        if src.at then return objectAt(src) end
         if not src.ent or not NetworkDoesNetworkIdExist(src.ent) then return nil end
         local ent = NetworkGetEntityFromNetworkId(src.ent)
         if ent == 0 or not DoesEntityExist(ent) then return nil end
@@ -584,6 +645,7 @@ end
 -- on every beat; only the voices due are worked out and sent.
 VoiceEnv = nil    -- how every heard voice travels, as last worked out, for /voicedebug
 VoicePeds = pedOf -- [identity] = the ped that voice comes from, for /voicedebug
+VoiceAt = atOf    -- [identity] = { x, y, z } where it comes from (a speaker's middle, a spot), for /voicedebug
 
 startPose = function()
     if poseRunning or next(heard) == nil then return end
@@ -602,18 +664,36 @@ startPose = function()
                     -- Every head on the quarter-second beat; between, only the live and the talking.
                     if all or live[id] or talkers[id] then
                         local ped = pedFor(src)
+                        local spot = type(src) == 'table' and src.at or nil
+                        -- A place riding an entity: its spot on it, and the object riding there (the object is
+                        -- what the sound comes out of, and what is in the way of nothing: environment.lua's own).
+                        local ride, rider = nil, nil
+                        if ped and type(src) == 'table' and src.off then
+                            ride, rider = ridingAt(ped, src)
+                            if rider then ped = rider end
+                        end
                         pedOf[id] = ped
-                        if ped then
-                            -- (A world voice may come from something that is not a ped: its middle, a little up.)
-                            local h = IsEntityAPed(ped) and GetPedBoneCoords(ped, HEAD_BONE, 0.0, 0.0, 0.0)
-                                or GetOffsetFromEntityInWorldCoords(ped, 0.0, 0.0, 0.5)
+                        if ped or spot then
+                            -- (A world voice may come from something that is not a ped: its middle, a little up; a
+                            -- fixed spot's object, the middle of it; a fixed spot with no object here, the spot; a
+                            -- spot on an entity, the object riding there or the spot.)
+                            local h
+                            if not ped then h = vector3(spot[1] + 0.0, spot[2] + 0.0, spot[3] + 0.0)
+                            elseif IsEntityAPed(ped) then h = GetPedBoneCoords(ped, HEAD_BONE, 0.0, 0.0, 0.0)
+                            elseif ride then h = rider and middleOf(rider) or ride
+                            elseif spot then h = middleOf(ped)
+                            else h = GetOffsetFromEntityInWorldCoords(ped, 0.0, 0.0, 0.5) end
                             where[id] = { h.x, h.y, h.z }
-                            local every = live[id] and ENV_LIVE_MS or ENV_QUIET_MS
+                            atOf[id] = where[id]
+                            -- (Sound coming out counts as live: a speaker's song changes smoothly as you walk.)
+                            local every = (live[id] or talkers[id]) and ENV_LIVE_MS or ENV_QUIET_MS
                             if not envAt[id] or now - envAt[id] >= every then
-                                due[id] = { ped = ped, head = where[id], range = heardRange[id], loud = heardFx[id] == 'megaphone' }
+                                -- (A megaphone or a speaker's sound is loud: it gets through a car's cabin.)
+                                due[id] = { ped = ped or 0, head = where[id], range = heardRange[id], loud = heardFx[id] ~= nil,
+                                            mu = heardMu[id] }
                             end
                         else
-                            where[id] = false            -- this game cannot place them: silent
+                            where[id], atOf[id] = false, nil   -- this game cannot place them: silent
                         end
                     end
                 end
@@ -627,7 +707,7 @@ startPose = function()
                         local v = {}
                         for id, a in pairs(env.v) do
                             envCache[id], envAt[id] = a, now
-                            v[id] = { g = a.g, f = a.f, at = a.at, p = a.p }
+                            v[id] = { g = a.g, f = a.f, at = a.at, p = a.p, g2 = a.g2, f2 = a.f2, at2 = a.at2, p2 = a.p2 }
                         end
                         msg.e = { rv = env.rv or false, v = v }
                         VoiceEnv = { rv = env.rv, v = envCache }

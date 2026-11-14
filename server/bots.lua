@@ -23,10 +23,22 @@
 -- its range, at the ped's head, through walls and rooms and cars, with its mouth moving. It only talks. It stays (one
 -- connection, any number of recordings) until let go:
 --
---   exports.whip_voice:CreateWorldVoice({ name, at = { netId = n }, range })   -> key | false, why   (WAITS)
---   exports.whip_voice:PlayWorldVoice(key, audio, onDone)                         -> durationMs | false, why  (WAITS)
---       a new line while one plays cuts it off (onDone 'cut'); else onDone(key, 'done' | 'removed' | 'failed')
---   exports.whip_voice:MoveWorldVoice(key, { netId = n })                        -> true | false, why
+--   exports.whip_voice:CreateWorldVoice({ name, at, range, bucket })   -> key | false, why   (WAITS)
+--       at: where it comes from. One place, or a list of up to 32 (a room full of speakers: one sound, heard from
+--       every one of them, in step). A place is { netId = n } (an entity, followed as it moves) or
+--       { coords = vector3, model = hash|name } (a fixed spot; with the model of the object standing there, that
+--       object's walls and room are used, as each game finds its own copy of it). bucket: the routing bucket of
+--       fixed spots (default 0).
+--   exports.whip_voice:PlayWorldVoice(key, audio, onDone, opts)                   -> durationMs | false, why  (WAITS)
+--       a new line while one plays cuts it off (onDone 'cut'); else onDone(key, 'done' | 'stopped' | 'removed' | 'failed')
+--       opts: { loop = true (until StopWorldVoice), music = true (a song: the voice bot's musicSeconds / musicBytes,
+--       not a line's limits), fadeIn = ms (from silence at its start) }
+--   exports.whip_voice:StopWorldVoice(key, fadeMs)                               -> true | false, why
+--       stops what it plays, at once or faded down over fadeMs first (onDone 'stopped')
+--   exports.whip_voice:SetWorldVoiceSound(key, recipe | false)                   -> true | false, why
+--       how it sounds to everyone hearing it: a sound recipe (shared/sound_blocks.lua: a cheap speaker, a robot), or
+--       false for its plain voice. A megaphone up sounds as a megaphone instead.
+--   exports.whip_voice:MoveWorldVoice(key, at)                                    -> true | false, why
 --   exports.whip_voice:SetWorldVoiceRange(key, range, fullWithin)                -> true | false, why
 --       how far it carries (2-300 m), and how far out it is still at full volume (nil: the usual, a metre)
 --   exports.whip_voice:SetWorldVoiceMegaphone(key, on)                            -> true | false, why
@@ -116,6 +128,42 @@ end
 --- rule); a world voice on a radio frequency talks from its entity (`placed`), so the radio breaks up with distance
 --- and only its own world hears it, as for a player. One whose entity is not there (despawned, out of the server's
 --- scope) is nowhere to talk from: off the air until it is back, never heard everywhere.
+--- Where a world voice's places are now: { x, y, z, bucket } for each that is there (an entity despawned or out of the
+--- server's scope is left out; a fixed spot is always there).
+local function placesNow(w)
+    local out = {}
+    for _, p in ipairs(w.points) do
+        if p.netId then
+            local ent = NetworkGetEntityFromNetworkId(p.netId)
+            if ent ~= 0 and DoesEntityExist(ent) then
+                local c = GetEntityCoords(ent)
+                out[#out + 1] = { x = c.x, y = c.y, z = c.z, bucket = GetEntityRoutingBucket(ent) }
+            end
+        else
+            out[#out + 1] = { x = p.x, y = p.y, z = p.z, bucket = w.bucket or 0 }
+        end
+    end
+    return out
+end
+
+--- The one point who hears it is worked out from: the middle of its places, and how far the furthest place is from
+--- it (added to its range, so everyone near any of them is connected; each game then hears each place by its own
+--- distance). nil when none of its places is there.
+local function middleOf(w)
+    local pts = placesNow(w)
+    if #pts == 0 then return nil end
+    if #pts == 1 then return pts[1], 0 end
+    local x, y, z = 0.0, 0.0, 0.0
+    for _, p in ipairs(pts) do x, y, z = x + p.x, y + p.y, z + p.z end
+    x, y, z = x / #pts, y / #pts, z / #pts
+    local spread = 0.0
+    for _, p in ipairs(pts) do
+        local d = math.sqrt((p.x - x) ^ 2 + (p.y - y) ^ 2 + (p.z - z) ^ 2)
+        if d > spread then spread = d end
+    end
+    return { x = x, y = y, z = z, bucket = pts[1].bucket }, spread
+end
+
 function VoiceBots.talkers(players)
     local out = {}
     for i = 1, #players do out[i] = players[i] end
@@ -123,10 +171,9 @@ function VoiceBots.talkers(players)
         if b.lineId then
             local t = { src = key, bot = true, speaks = true, bucket = -1, x = 0.0, y = 0.0, z = 0.0, range = 0 }
             if b.world then
-                local ent = b.world.netId and NetworkGetEntityFromNetworkId(b.world.netId) or 0
-                if ent ~= 0 and DoesEntityExist(ent) then
-                    local c = GetEntityCoords(ent)
-                    t.placed, t.bucket, t.x, t.y, t.z = true, GetEntityRoutingBucket(ent), c.x, c.y, c.z
+                local m = middleOf(b.world)
+                if m then
+                    t.placed, t.bucket, t.x, t.y, t.z = true, m.bucket, m.x, m.y, m.z
                     out[#out + 1] = t
                 end
             else
@@ -143,32 +190,50 @@ local function worldRange(w)
     return w.range
 end
 
---- Everyone the proximity pass works with: the players, and every world voice where its entity is now (a speaker
---- only: `bot`, so it never listens). A world voice whose entity is not there (despawned, out of scope of the
+--- Everyone the proximity pass works with: the players, and every world voice where it is now (a speaker only: `bot`,
+--- so it never listens). A world voice none of whose places is there (its entity despawned, out of scope of the
 --- server) is left out, and everyone hearing it lets go as of a player gone.
 function VoiceBots.inWorld(players)
     local out
     for key, b in pairs(VoiceBots.byKey) do
         local w = b.world
-        local ent = w and w.netId and NetworkGetEntityFromNetworkId(w.netId) or 0
-        if ent ~= 0 and DoesEntityExist(ent) then
+        local m, spread = nil, 0
+        if w then m, spread = middleOf(w) end
+        if m then
             if not out then out = {}; for i = 1, #players do out[i] = players[i] end end
-            local c = GetEntityCoords(ent)
-            out[#out + 1] = { src = key, bot = true, speaks = true, bucket = GetEntityRoutingBucket(ent),
-                              x = c.x, y = c.y, z = c.z, range = worldRange(w) }
+            out[#out + 1] = { src = key, bot = true, speaks = true, bucket = m.bucket,
+                              x = m.x, y = m.y, z = m.z, range = worldRange(w) + spread }
         end
     end
     return out or players
 end
 
---- A world voice as a listener's game is told of it: where it comes from (the entity's network id), how far it
---- carries, how far out it is still at full volume (`full`, only when set: html/js/audio.js fade), and its megaphone's
---- sound while one is up. nil for a bot that is not one.
+--- How a world voice sounds: the megaphone while one is up, else its own recipe (SetWorldVoiceSound), else plain.
+local function fxOf(w)
+    if w.megaphone then return 'megaphone' end
+    return w.sound
+end
+
+--- A world voice as a listener's game is told of it: where it comes from (`ent`, one entity's network id; or `pts`,
+--- its places: { ent = netId, off?, model? } — `off` a spot on that entity, where an object of `model` rides it — or
+--- { at = { x, y, z }, model }), how far it carries, how far out it is still at full volume (`full`, only when set:
+--- html/js/audio.js fade), its sound (`fx`: 'megaphone' or a recipe), and `mu` when it is music (heard as from far off:
+--- late by its distance, the Doppler effect, the air's treble; html/js/audio.js setSpace). nil for a bot that is not one.
 function VoiceBots.worldEntry(key)
     local b = VoiceBots.byKey[key]
     if not (b and b.world) then return nil end
-    return { id = b.identity, ent = b.world.netId, range = worldRange(b.world), full = b.world.full,
-             fx = b.world.megaphone and 'megaphone' or nil }
+    local w = b.world
+    local e = { id = b.identity, range = worldRange(w), full = w.full, fx = fxOf(w), mu = w.music or nil }
+    if #w.points == 1 and w.points[1].netId and not w.points[1].off then
+        e.ent = w.points[1].netId
+    else
+        e.pts = {}
+        for i, p in ipairs(w.points) do
+            if p.netId then e.pts[i] = { ent = p.netId, off = p.off, model = p.off and p.model or nil }
+            else e.pts[i] = { at = { p.x, p.y, p.z }, model = p.model } end
+        end
+    end
+    return e
 end
 
 --- The identity a bot is heard by, or nil.
@@ -283,9 +348,11 @@ function VoiceBots.create(owner, spec)
     return key, VoiceBots.byKey[key].duration
 end
 
---- A world voice says a recording: fetched and played by the service, at the entity. Answers its length;
---- onDone(key, 'done' | 'cut' | 'removed' | 'failed') hears when it ended. The voice stays for the next one.
-function VoiceBots.say(key, audio, onDone)
+--- A world voice says a recording: fetched and played by the service, at its places. Answers its length;
+--- onDone(key, 'done' | 'stopped' | 'cut' | 'removed' | 'failed') hears when it ended. The voice stays for the next one.
+--- opts: { loop (until stopped), music (a song's limits, not a line's), fadeIn (ms) }.
+function VoiceBots.say(key, audio, onDone, opts)
+    opts = type(opts) == 'table' and opts or {}
     local b = VoiceBots.byKey[key]
     if not (b and b.world) then return nil, 'no such world voice' end
     local a, awhy = VoiceBots.audioOf(audio)
@@ -297,8 +364,11 @@ function VoiceBots.say(key, audio, onDone)
         CreateThread(function() pcall(fn, key, 'cut') end)
     end
     b.plays = b.plays + 1
+    b.stopping = nil
     local mine = b.plays
-    local status, data = request('POST', '/calls/' .. b.identity .. '/play', { audio = a })
+    local loop = opts.loop == true
+    local status, data = request('POST', '/calls/' .. b.identity .. '/play', { audio = a, loop = loop or nil,
+        music = opts.music == true or nil, fadeIn = math.max(0, math.min(30000, math.floor(tonumber(opts.fadeIn) or 0))) })
     if status ~= 200 or not (data and data.ok) then return nil, why(status, data) end
     local duration = tonumber(data.duration) or 0
     -- Another line asked for meanwhile (the request waits on the service), or the voice gone: this one is over as it
@@ -309,24 +379,43 @@ function VoiceBots.say(key, audio, onDone)
         return duration
     end
     b.onDone = onDone
-    -- Asked how far it got until it is done (it waits up to 3 s for a listener first, then plays).
+    -- Asked how far it got until it is done (it waits up to 3 s for a listener first, then plays). A loop plays until
+    -- it is stopped, so it is asked about with no end in sight, and less often (a song is long).
     CreateThread(function()
-        local limit = GetGameTimer() + duration + 15000
-        Wait(math.max(300, duration))
+        local limit = loop and math.huge or (GetGameTimer() + duration + 15000)
+        local every = (loop or duration > 30000) and 1000 or 300
+        Wait(loop and 1000 or math.max(300, duration))
         while VoiceBots.byKey[key] == b and b.plays == mine and GetGameTimer() < limit do
             local s, d = request('GET', '/calls/' .. b.identity)
             local state = s == 200 and d and d.state or 'gone'
             if state ~= 'playing' then break end
-            Wait(300)
+            Wait(every)
         end
         if VoiceBots.byKey[key] == b and b.plays == mine and b.onDone then
             local fn = b.onDone
             b.onDone = nil
-            local ok, err = pcall(fn, key, 'done')
+            local ok, err = pcall(fn, key, b.stopping and 'stopped' or 'done')
             if not ok then say('^1%s\'s onDone failed: %s^0', b.owner, tostring(err)) end
         end
     end)
     return duration
+end
+
+--- Stop what a world voice plays: at once, or faded down over fadeMs (the service fades it, so everyone hearing it
+--- hears the same fade). Its onDone hears 'stopped'. true, or false and why.
+function VoiceBots.stop(key, fadeMs)
+    local b = VoiceBots.byKey[key]
+    if not (b and b.world) then return false, 'no such world voice' end
+    if not b.onDone then return true end   -- nothing playing
+    b.stopping = true
+    local status, data = request('POST', '/calls/' .. b.identity .. '/stop',
+        { fade = math.max(0, math.min(30000, math.floor(tonumber(fadeMs) or 0))) })
+    if status == 404 and not (data and data.error == 'no such call') then
+        b.stopping = nil
+        return false, 'the voice bot is older than 1.5.0 and cannot stop a recording: run the voice setup again'
+    end
+    if status ~= 200 then b.stopping = nil; return false, why(status, data) end
+    return true
 end
 
 --- Put a bot on a line (its members hear it from now; it plays when told).
@@ -454,39 +543,152 @@ local function reachOf(range, full)
     return range, full
 end
 
---- `at` as a world voice takes it: { netId } of an entity that exists now. nil and why.
-local function worldAt(at, range, full)
-    if type(at) ~= 'table' or isFuncRef(at) then return nil, 'at is { netId = n } (the entity the voice comes from)' end
-    local netId = math.tointeger(tonumber(rawget(at, 'netId')))
-    if not netId or netId <= 0 then return nil, 'at is { netId = n } (the entity the voice comes from)' end
-    local ent = NetworkGetEntityFromNetworkId(netId)
-    if ent == 0 or not DoesEntityExist(ent) then return nil, 'no entity with that netId' end
+local MAX_PLACES = 32   -- places one world voice comes from (a room or a stage full of speakers)
+local AT_HELP = 'at is { netId = n, offset?, model? }, { coords = vector3, model? }, or a list of them'
+local MAX_OFFSET = 10.0 -- metres a place may be from the entity it rides
+
+--- A number from a vector3 or a table, by name or by place: { x, y, z } and { x = .., y = .., z = .. } both.
+local function coordOf(c, name, i)
+    local ok, v = pcall(function() return c[name] or c[i] end)
+    v = ok and tonumber(v) or nil
+    return v and v == v and math.abs(v) < 1e6 and v or nil
+end
+
+local function modelOf(model)
+    if type(model) == 'string' then return model ~= '' and #model <= 64 and GetHashKey(model) or nil end
+    return math.tointeger(tonumber(model))
+end
+
+--- One place as a world voice keeps it: { netId } of an entity that exists now — with `off`, a spot on it (an offset
+--- in its own frame, where an object of `model` rides it: a speaker on a car's roof) — or { x, y, z, model } (a fixed
+--- spot, with the model of the object standing there, or none). nil and why.
+local function placeOf(p)
+    if type(p) ~= 'table' or isFuncRef(p) then return nil, AT_HELP end
+    local netId = rawget(p, 'netId')
+    if netId ~= nil then
+        netId = math.tointeger(tonumber(netId))
+        if not netId or netId <= 0 then return nil, AT_HELP end
+        local ent = NetworkGetEntityFromNetworkId(netId)
+        if ent == 0 or not DoesEntityExist(ent) then return nil, 'no entity with that netId' end
+        local o = rawget(p, 'offset')
+        if o == nil then return { netId = netId } end
+        if not (type(o) == 'vector3' or (type(o) == 'table' and not isFuncRef(o))) then return nil, 'offset is a vector3' end
+        local ox, oy, oz = coordOf(o, 'x', 1), coordOf(o, 'y', 2), coordOf(o, 'z', 3)
+        if not (ox and oy and oz) or math.sqrt(ox * ox + oy * oy + oz * oz) > MAX_OFFSET then
+            return nil, ('offset is a vector3 within %d m of the entity'):format(MAX_OFFSET)
+        end
+        return { netId = netId, off = { ox + 0.0, oy + 0.0, oz + 0.0 }, model = modelOf(rawget(p, 'model')) }
+    end
+    local c = rawget(p, 'coords')
+    local isVec = type(c) == 'vector3' or type(c) == 'vector4'
+    if not (isVec or (type(c) == 'table' and not isFuncRef(c))) then return nil, AT_HELP end
+    local x, y, z = coordOf(c, 'x', 1), coordOf(c, 'y', 2), coordOf(c, 'z', 3)
+    if not (x and y and z) then return nil, 'coords is a vector3 (x, y, z)' end
+    return { x = x + 0.0, y = y + 0.0, z = z + 0.0, model = modelOf(rawget(p, 'model')) }
+end
+
+--- `at` as a world voice takes it: one place, or a list of up to MAX_PLACES. A list of its places, or nil and why.
+local function placesOf(at)
+    if type(at) ~= 'table' or isFuncRef(at) then return nil, AT_HELP end
+    if rawget(at, 'netId') ~= nil or rawget(at, 'coords') ~= nil then
+        local one, why = placeOf(at)
+        if not one then return nil, why end
+        return { one }
+    end
+    local n = #at
+    if n == 0 then return nil, AT_HELP end
+    if n > MAX_PLACES then return nil, ('at most %d places'):format(MAX_PLACES) end
+    local out = {}
+    for i = 1, n do
+        local p, why = placeOf(rawget(at, i))
+        if not p then return nil, ('place %d: %s'):format(i, tostring(why)) end
+        out[i] = p
+    end
+    return out
+end
+
+--- A world voice's place in the world: its places, how far it carries and its full-volume circle, and the routing
+--- bucket of its fixed spots. nil and why.
+local function worldAt(at, range, full, bucket)
+    local points, why = placesOf(at)
+    if not points then return nil, why end
     range, full = reachOf(range, full)
-    return { netId = netId, range = range, full = full }
+    return { points = points, range = range, full = full, bucket = math.tointeger(tonumber(bucket)) or 0 }
+end
+
+--- A world voice for `owner`: { name, at, range, bucket, music }. Its key, or nil and why. The CreateWorldVoice export,
+--- and whip_voice's own speakers (server/speakers.lua), which may not call its exports.
+function VoiceBots.createWorld(owner, spec)
+    local world, w = worldAt(rawget(spec, 'at'), rawget(spec, 'range'), nil, rawget(spec, 'bucket'))
+    if not world then return nil, w end
+    world.music = rawget(spec, 'music') == true or nil
+    return VoiceBots.create(owner, { name = rawget(spec, 'name'), world = world })
+end
+
+--- The same rules as the exports below, for whip_voice's own world voices (server/speakers.lua).
+function VoiceBots.setWorldRange(key, range, full)
+    local b = VoiceBots.byKey[key]
+    if not (b and b.world) then return false, 'no such world voice' end
+    b.world.range, b.world.full = reachOf(range, full)
+    if Hearing and Hearing.rangeChanged then Hearing.rangeChanged(key) end
+    return true
+end
+
+function VoiceBots.setWorldSound(key, recipe)
+    local b = VoiceBots.byKey[key]
+    if not (b and b.world) then return false, 'no such world voice' end
+    if recipe == false or recipe == nil then
+        b.world.sound = nil
+    else
+        local r, why = Lines.checkRecipe(recipe)
+        if not r then return false, why end
+        b.world.sound = #r > 0 and r or nil
+    end
+    if Hearing then Hearing.rangeChanged(key) end
+    return true
 end
 
 exports('CreateWorldVoice', function(spec)
     local owner = GetInvokingResource()
     if not owner or owner == RESOURCE then return false, 'call it from another resource' end
-    if type(spec) ~= 'table' or isFuncRef(spec) then return false, 'a world voice is { name, at = { netId }, range }' end
-    local world, w = worldAt(rawget(spec, 'at'), rawget(spec, 'range'))
-    if not world then return false, w end
-    local key, d = VoiceBots.create(owner, { name = rawget(spec, 'name'), world = world })
+    if type(spec) ~= 'table' or isFuncRef(spec) then return false, 'a world voice is { name, at, range, bucket, music }' end
+    local key, d = VoiceBots.createWorld(owner, spec)
     if not key then return false, d end
     return key
 end)
 
-exports('PlayWorldVoice', function(key, audio, onDone)
+exports('PlayWorldVoice', function(key, audio, onDone, opts)
     local owner = GetInvokingResource()
     local b, w = mine(owner, key)
     if not b then return false, w end
     ---@cast owner -nil   -- the bot's owner, so a resource
     if not b.world then return false, 'that voice bot is on a line, not in the world (PlayVoiceBot)' end
     if onDone ~= nil and type(onDone) ~= 'function' and not isFuncRef(onDone) then return false, 'onDone is a function' end
+    local o = {}
+    if type(opts) == 'table' and not isFuncRef(opts) then
+        o.loop, o.music, o.fadeIn = rawget(opts, 'loop') == true, rawget(opts, 'music') == true, tonumber(rawget(opts, 'fadeIn'))
+    end
     local cb = onDone and function(...) if GetResourceState(owner) == 'started' then onDone(...) end end or nil
-    local d, pw = VoiceBots.say(key, audio, cb)
+    local d, pw = VoiceBots.say(key, audio, cb, o)
     if not d then return false, pw end
     return d
+end)
+
+exports('StopWorldVoice', function(key, fadeMs)
+    local owner = GetInvokingResource()
+    local b, w = mine(owner, key)
+    if not b then return false, w end
+    if not b.world then return false, 'that voice bot is on a line, not in the world' end
+    return VoiceBots.stop(key, fadeMs)
+end)
+
+exports('SetWorldVoiceSound', function(key, recipe)
+    local owner = GetInvokingResource()
+    local b, w = mine(owner, key)
+    if not b then return false, w end
+    if not b.world then return false, 'that voice bot is on a line, not in the world' end
+    -- (Everyone hearing it hears the new sound at once.)
+    return VoiceBots.setWorldSound(key, recipe)
 end)
 
 exports('MoveWorldVoice', function(key, at)
@@ -494,10 +696,10 @@ exports('MoveWorldVoice', function(key, at)
     local b, w = mine(owner, key)
     if not b then return false, w end
     if not b.world then return false, 'that voice bot is on a line, not in the world' end
-    local world, ww = worldAt(at, b.world.range, b.world.full)
-    if not world then return false, ww end
-    world.megaphone = b.world.megaphone   -- (moving does not put a megaphone down)
-    b.world = world
+    local points, ww = placesOf(at)
+    if not points then return false, ww end
+    b.world.points = points   -- (moving keeps its range, megaphone, sound and bucket)
+    if Hearing then Hearing.rangeChanged(key) end
     return true
 end)
 
@@ -507,10 +709,8 @@ exports('SetWorldVoiceRange', function(key, range, full)
     if not b then return false, w end
     if not b.world then return false, 'that voice bot is on a line, not in the world' end
     if tonumber(range) == nil then return false, 'range is a number of metres' end
-    b.world.range, b.world.full = reachOf(range, full)
     -- (Those hearing it now: the new edge at once. Those it now reaches: the next pass connects them.)
-    if Hearing and Hearing.rangeChanged then Hearing.rangeChanged(key) end
-    return true
+    return VoiceBots.setWorldRange(key, range, full)
 end)
 
 exports('SetWorldVoiceMegaphone', function(key, on)

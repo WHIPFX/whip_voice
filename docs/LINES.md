@@ -137,26 +137,56 @@ hears the line, and nobody near anyone hears it except through a member's device
 
 ## World voices
 
-A world voice plays recordings from an entity, usually an NPC, and is heard like a player's voice: from the entity's
-head, within its range. It only talks. The Director's lore characters use it.
+A world voice plays recordings from an entity, usually an NPC, or from fixed spots, and is heard like a player's
+voice: from where it is, within its range, through walls and doorways. It only talks. The Director's lore characters
+and speakers use it.
 
 | Export | Returns | Description |
 |---|---|---|
-| `CreateWorldVoice({ name, at = { netId }, range })` | `key` | Creates a voice at an entity. `range` is 2–300 m, default 12. WAITS. |
-| `PlayWorldVoice(key, audio, onDone)` | `durationMs` | Plays a recording (`audio` as in `CreateVoiceBot`), cutting off one already playing. WAITS while it loads. |
-| `MoveWorldVoice(key, { netId })` | `true` | Moves it to another entity, keeping its settings. |
+| `CreateWorldVoice({ name, at, range, bucket, music })` | `key` | Creates a voice where `at` says. `range` is 2–300 m, default 12. `bucket` is the routing bucket of fixed spots (default 0). `music = true` makes it heard as music (below). WAITS. |
+| `PlayWorldVoice(key, audio, onDone, opts)` | `durationMs` | Plays a recording (`audio` as in `CreateVoiceBot`), cutting off one already playing. WAITS while it loads. |
+| `StopWorldVoice(key, fadeMs)` | `true` | Stops what it plays, at once or faded down over `fadeMs` (up to 30000). |
+| `MoveWorldVoice(key, at)` | `true` | Moves it, keeping its settings. |
 | `SetWorldVoiceRange(key, range, fullWithin)` | `true` | Sets how far it carries (2–300 m) and how far it stays at full volume. |
-| `SetWorldVoiceMegaphone(key, on)` | `true` | Raises or lowers a megaphone, as the megaphone item does. |
+| `SetWorldVoiceSound(key, recipe)` | `true` | How it sounds to everyone hearing it: a recipe (below), or `false` for its plain sound. |
+| `SetWorldVoiceMegaphone(key, on)` | `true` | Raises or lowers a megaphone, as the megaphone item does. It sounds like the megaphone while it is up, whatever its own sound. |
 | `SetWorldVoiceRadio(key, frequency)` | `true` | Puts it on a radio frequency (100–999), or takes it off with `false`. |
 | `RemoveWorldVoice(key)` | `true` | Removes it. |
+| `GetPlayerRadio(source)` | `frequency` or `false` | The frequency a player's radio is on, or `false` while it is off. |
 
-Each returns `false, reason` on failure. `onDone(key, reason)` receives `'done'`, `'cut'`, `'removed'` or `'failed'`.
+Each returns `false, reason` on failure. `onDone(key, reason)` receives `'done'`, `'stopped'`, `'cut'`, `'removed'` or
+`'failed'`.
 
-- The voice is silent, on the radio too, while its entity doesn't exist on the server. After respawning the NPC, call
+`at` is one place or a list of up to 32. A list is one sound heard from every place at once, in step: a room full of
+speakers. Each player hears each place by their own distance to it, and the places add up as real speakers do, by
+their power: two alike are 3 dB louder than one, not twice as loud, and next to one of them you hear mostly that one.
+
+| A place | Comes from |
+|---|---|
+| `{ netId = n }` | An entity, followed as it moves. |
+| `{ netId = n, offset = vector3(x, y, z), model = 'prop_speaker_06' }` | A spot on an entity, in its own frame (up to 10 m from it): a speaker on a car's roof. With `model`, the sound comes out of the object of that model riding there. |
+| `{ coords = vector3(x, y, z), model = 'prop_speaker_06' }` | A fixed spot. With `model`, each player's game finds its own copy of the object standing there, so the object's walls and room are used. |
+
+A world voice made with `music = true` is heard as sound from far off is, which a voice in a conversation must not be:
+it arrives late by its distance at the speed of sound, so as it comes closer or goes away it plays a little faster
+and higher, or slower and lower (the Doppler effect, by the speed itself: a car passing at 110 km/h about a semitone
+and a half); the air takes its treble with distance while its bass carries; and outdoors, the further off it is, the
+more of what you hear is its echo off everything around. Round a corner outdoors it is heard by two ways at once, the
+best way round and the best through another opening, each from its own corner and as loud as its own length and bends
+make it: walking past a row of alleys, one fades up as the other fades down, and where it seems to come from slides to
+a new corner rather than jumping. The Director's speakers and the speaker item are music.
+
+`opts` for `PlayWorldVoice`: `loop = true` plays it over and over until `StopWorldVoice`; `music = true` lets it be a
+song, up to the voice bot's `musicSeconds` and `musicBytes` (10 minutes and 40 MB unless its config.json says
+otherwise) rather than a line's two minutes; `fadeIn = ms` brings it up from silence.
+
+- The voice is silent, on the radio too, while none of its places exists on the server. After respawning an NPC, call
   `MoveWorldVoice`.
 - On a frequency it is heard like a player's radio: by players on that frequency in its routing bucket, fading with
   distance.
 - It belongs to the resource that created it and is removed when that resource stops.
+- Songs, loops, fades and `StopWorldVoice` need voice bot 1.5.0 or newer. An older bot answers `StopWorldVoice` by
+  saying to run the voice setup again.
 
 ```lua
 -- A dispatcher heard at the desk and on radio channel 100. These exports wait, so call them in a thread.
@@ -166,6 +196,20 @@ CreateThread(function()
     Whip.voice('SetWorldVoiceRadio', voice, 100)
     Whip.voice('PlayWorldVoice', voice, '@my_story/audio/all_units.ogg')
 end)
+```
+
+```lua
+-- Two speakers on a club's walls playing one song on a loop, sounding like cheap speakers, faded out at closing time.
+CreateThread(function()
+    local club = Whip.voice('CreateWorldVoice', { name = 'Club', range = 40, at = {
+        { coords = vector3(-1386.9, -614.3, 31.8), model = 'prop_speaker_06' },
+        { coords = vector3(-1380.2, -627.1, 31.8), model = 'prop_speaker_06' },
+    } })
+    if not club then return end
+    Whip.voice('SetWorldVoiceSound', club, { { 'highpass', hz = 120 }, { 'lowpass', hz = 9000 }, { 'peak', hz = 1800, db = 3 } })
+    Whip.voice('PlayWorldVoice', club, 'https://r2.fivemanage.com/your-id/night.mp3', nil, { loop = true, music = true, fadeIn = 2000 })
+end)
+-- Later: Whip.voice('StopWorldVoice', club, 3000)
 ```
 
 ## Recipes: sound as data

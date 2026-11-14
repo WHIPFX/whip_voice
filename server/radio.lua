@@ -12,6 +12,9 @@
 --
 -- The server decides who is on which frequency and whose radio is on speaker: it only happens with a radio in the
 -- player's pockets and a real frequency. The dead stay on and can hear; they cannot talk.
+--
+--   exports.whip_voice:GetPlayerRadio(source)   -> the frequency their radio is on (a whole number), or false while
+--                                                  it is off (a world voice can join it: SetWorldVoiceRadio)
 
 Radio = {
     members = {},    -- [src] = frequency, while their radio is on
@@ -139,4 +142,9 @@ end)
 -- Gone: forgotten (their lines let go of them by themselves: server/lines.lua).
 AddEventHandler('playerDropped', function()
     Radio.members[source], Radio.speakers[source] = nil, nil
+end)
+
+exports('GetPlayerRadio', function(source)
+    local f = Radio.members[tonumber(source) or -1]
+    return f ~= nil and f or false
 end)

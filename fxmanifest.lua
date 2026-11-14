@@ -28,20 +28,23 @@ server_scripts {
     'server/lines.lua',         -- voice lines: players who hear each other wherever they are (radio frequencies, calls)
     'server/lines_api.lua',     -- voice lines for other resources: OpenLine and the rest (exports)
     'server/bots.lua',          -- voice bots: a recording played into a line (the voice bot service, service\voicebot)
-    'server/items.lua',         -- the megaphone and radio items
+    'server/items.lua',         -- the megaphone, radio and speaker items
     'server/megaphone.lua',     -- the megaphone: 3x the range, a bullhorn sound
     'server/radio.lua',         -- the radio: frequencies, and who is on which
+    'server/speakers.lua',      -- the speaker: put down anywhere (a car too), a song played from it
     'server/check.lua',         -- /voicecheck: is voice set up right, seen from the game
     'server/main.lua',
 }
 
 client_scripts {
     'client/acoustics.lua',     -- how a voice travels: the rules (pure)
+    'client/ways.lua',          -- the way round outdoors: the open ground as a grid, the shortest way through it
     'client/environment.lua',   -- reading the world for them: rooms, doorways, doors, cars, water
     'client/main.lua',
     'client/megaphone.lua',     -- the megaphone item: its emote, and when it ends
     'client/radio.lua',         -- the radio item: on/off and frequency, the talk emote
     'client/walkie.lua',        -- the radio item's 3D radio on the screen
+    'client/speakers.lua',      -- the speaker item: putting it down, the prompt behind it
     'client/debug.lua',         -- /voicedebug
 }
 

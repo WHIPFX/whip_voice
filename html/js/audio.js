@@ -8,6 +8,14 @@
 // Position is decided on this player's machine whenever the game sends a pose (client/main.lua): the ears are the game
 // camera, each voice sits at its speaker's head. Loudness is the distance between the two heads, not the camera.
 // Full volume up close, silence exactly at the speaker's range.
+//
+// MUSIC (a world voice made with `music`: a speaker, a song; setSpace) is heard as sound from far off is, which a
+// voice in a conversation must not be (it would lag):
+//   it arrives late, by its distance at the speed of sound — and so, as it comes closer or goes away, it plays a
+//     little faster and higher, or slower and lower: the Doppler effect, by the speed itself (setDelay);
+//   the air takes its treble with distance while its bass carries (tone);
+//   outdoors, the more of it you hear is its wash off everything around, the further off it is (the outdoor wash,
+//     beside the room's echo indoors).
 // GTA's axes are x east, y north, z up; Web Audio's are x right, y up, z towards the viewer: (x, y, z) is (x, z, -y).
 
 'use strict';
@@ -40,6 +48,17 @@ window.VoiceAudio = (() => {
     let echoNow = null;          // the preset sounding now (null = none)
     let sendLevel = 0;           // how much of each voice goes into the echo now
     const echoCache = {};
+    // The outdoor wash: music outdoors, off the buildings and the ground around (one unit, plugged in only while some
+    // music is). Longer and duller than a room, after a gap; how much of a song goes in grows with its distance (wash).
+    ECHO.outside = { decay: 1.6, pre: 0.045, wet: 0 };
+    const WASH = 0.3;            // a song's wash at full volume (close up); far off it outweighs the song itself
+    let washIn = null, washConv = null, washWired = false, washTimer = null;
+
+    // How far off music sounds: the speed of sound, and how fast its delay may change (the Doppler effect's size).
+    const SOUND_SPEED = 343;     // metres a second
+    const DOPPLER_MAX = 0.15;    // seconds of delay a second: at most 15% faster or slower (about 185 km/h)
+    const DELAY_JUMP = 0.08;     // a change bigger than this at once (27 m: a teleport, a new place) is not slid
+    const DELAY_MAX = 1.9;       // seconds (650 m, past any range)
 
     // THE SOUND SETTINGS from config.lua (connect `sound`, see setSound).
     let hrtf = true;             // Config.Environment.headphone3D
@@ -65,6 +84,9 @@ window.VoiceAudio = (() => {
             lineOut = ctx.createGain();
             lineOut.connect(limiter);
             echoIn = ctx.createGain();
+            washIn = ctx.createGain();
+            washConv = ctx.createConvolver();
+            washConv.connect(master);
             for (let i = 0; i < 2; i++) {
                 const conv = ctx.createConvolver();
                 const out = ctx.createGain();
@@ -102,6 +124,59 @@ window.VoiceAudio = (() => {
         return buf;
     }
 
+    /** The outdoor wash, plugged in only while this player is outdoors and some music is plugged in (it is as heavy as
+     *  a room's echo); unplugged once its tail has died away. */
+    function wireWash() {
+        if (!ctx) return;
+        let want = false;
+        if (!echoNow) for (const v of voices.values()) if (v.music && v.plugged) { want = true; break; }
+        clearTimeout(washTimer);
+        washTimer = null;
+        if (want === washWired) return;
+        if (want) {
+            if (!washConv.buffer) washConv.buffer = impulse('outside');
+            washIn.connect(washConv);
+            washWired = true;
+        } else {
+            washTimer = setTimeout(() => {
+                washTimer = null;
+                try { washIn.disconnect(washConv); } catch (_) { /* not connected */ }
+                washWired = false;
+            }, 2500);
+        }
+    }
+
+    /** How much of a song goes into the outdoor wash: falling far slower than the song itself, so close up it is mostly
+     *  the song and far off mostly its wash. None indoors (the room's echo has it). */
+    const washOf = (v) => (echoNow ? 0 : WASH * Math.sqrt(v.loud) * v.share);
+
+    // SEVERAL PLACES OF ONE VOICE (a room or a stage of speakers: '<identity>#<n>', one chain each, all one track) ADD
+    // UP AS REAL SPEAKERS DO: by their power, +3 dB for each doubling, not as one sound copied in step, +6 dB (two
+    // speakers +6, four +12, thirty-two +30, which the page did by itself). Each place's share is sqrt(sum of g²) /
+    // sum of g, g its loudness here with its muffle: next to one speaker about 1 (that one is what you hear); amid N
+    // alike, 1/sqrt(N), so together they are sqrt(N) times one, the sum of their power.
+    function shareGroups() {
+        const sums = new Map();      // group -> [sum of amp, sum of amp²]
+        for (const v of voices.values()) {
+            // A place heard by two ways round (music: altOf) adds them up the same way, by their power: `k` on both,
+            // so together they are sqrt(e1² + e2²), its `amp`.
+            const e1 = v.loud * v.occTo;
+            const e2 = v.alt && v.alt.hooked ? v.alt.loud * v.alt.occTo : 0;
+            v.amp = Math.sqrt(e1 * e1 + e2 * e2);
+            v.k = e1 + e2 > 1e-6 ? v.amp / (e1 + e2) : 1;
+            if (!v.group || !v.plugged || !v.head) continue;
+            const s = sums.get(v.group) || [0, 0];
+            s[0] += v.amp;
+            s[1] += v.amp * v.amp;
+            sums.set(v.group, s);
+        }
+        for (const v of voices.values()) {
+            if (!v.group) { v.share = 1; continue; }
+            const s = sums.get(v.group);
+            v.share = s && s[0] > 1e-6 ? Math.sqrt(s[1]) / s[0] : 1;
+        }
+    }
+
     // An echo unit only runs while it sounds (they are the heaviest part of the mix): one fading out is unplugged once
     // faded, both are unplugged outdoors, and one is plugged back in when wanted.
     const ECHO_OFF_MS = 1500;
@@ -133,7 +208,11 @@ window.VoiceAudio = (() => {
         clearTimeout(last.offTimer);
         last.offTimer = setTimeout(() => { last.offTimer = null; if (last !== echo[echoLive] || !echoNow) wireUnit(last, false); }, ECHO_OFF_MS);
         sendLevel = want ? ECHO[want].wet : 0;
-        for (const v of voices.values()) v.send.gain.setTargetAtTime(sendLevel * v.loud, t, 0.15);
+        for (const v of voices.values()) {
+            v.send.gain.setTargetAtTime(sendLevel * v.loud * v.share, t, 0.15);
+            if (v.wash) v.wash.gain.setTargetAtTime(washOf(v), t, 0.15);
+        }
+        wireWash();
     }
 
     // How close a voice must be for full volume (Config.FullVolumeWithin, sent with `connect`)...
@@ -174,8 +253,10 @@ window.VoiceAudio = (() => {
         // (With a full-volume circle of its own, it sounds close out to it too: the tone changes over the rest.)
         const near = v.full > 0 ? Math.min(v.full, (v.range || 8) - 1) : 0;
         const t = Math.max(0, Math.min(1, (d - near) / ((v.range || 8) - near)));
-        const b = Math.round(bassDbAt(t) * 2) / 2 || 0;      // (|| 0: never -0)
-        const top = Math.round(topDbAt(t) * 2) / 2 || 0;
+        // Music: the air's own, by the metre, whatever its range: the treble goes (6 dB by 40 m, 15 by 100), the bass
+        // carries (a concert heard from down the road is its bass).
+        const b = v.music ? 0 : Math.round(bassDbAt(t) * 2) / 2 || 0;      // (|| 0: never -0)
+        const top = Math.round((v.music ? -Math.min(15, Math.max(0, d - near) * 0.15) : topDbAt(t)) * 2) / 2 || 0;
         if (b !== v.bassDb) { v.bassDb = b; v.bass.gain.value = b; }
         if (top !== v.topDb) { v.topDb = top; v.top.gain.value = top; }
     }
@@ -187,6 +268,7 @@ window.VoiceAudio = (() => {
         sideDb = Number.isFinite(Number(o.sideDb)) ? Math.max(0, Math.min(20, Number(o.sideDb))) : 6;
         for (const v of voices.values()) {
             v.panner.panningModel = hrtf ? 'HRTF' : 'equalpower';
+            if (v.alt) v.alt.panner.panningModel = hrtf ? 'HRTF' : 'equalpower';
             setHrtfFix(v);
             if (v.plugged && v.head && lastPose) aim(v, lastPose);
         }
@@ -278,7 +360,12 @@ window.VoiceAudio = (() => {
 
         const v = { source, filter, occ, bass, top, fix, panner, earL, earR, gain, send, analyser, buf: new Float32Array(analyser.fftSize),
             range: range || 8, at: null, path: null, head: null, talking: false, loudAt: 0, loud: 0, bassDb: 0, topDb: 0,
-            live: false, plugged: false, unplugTimer: null, fx: null, input: !!input };
+            live: false, plugged: false, unplugTimer: null, fx: null, input: !!input,
+            music: false, delay: null, wash: null, poseAt: 0,    // (music: setSpace)
+            // One place of a voice heard from several ('<identity>#<n>'): its group, and its share (shareGroups).
+            group: id.includes('#') ? id.slice(0, id.indexOf('#')) : null, share: 1, occTo: 1,
+            // Music: the junction after its effect, its second way round's branch, their sum's factor (altOf, shareGroups).
+            post: null, alt: null, k: 1, amp: 0 };
         setHrtfFix(v);
         voices.set(id, v);
     }
@@ -295,23 +382,172 @@ window.VoiceAudio = (() => {
         return f;
     }
 
-    /** Where a voice's sound goes in first: its effect, or straight to the muffle filter. */
-    const into = (v) => (v.fx ? v.fx.input : v.filter);
+    /** Where a voice's sound goes in first: its effect, or straight on (music's junction, else the muffle filter). */
+    const into = (v) => (v.fx ? v.fx.input : (v.post || v.filter));
+    /** Where its source is plugged: music's delay (always joined to `into`), else `into` itself. */
+    const inlet = (v) => v.delay || into(v);
 
-    /** A speaker's effect on (a built-in recipe's name) or off (null). Swapped in place, even mid-sentence. */
-    function setFx(id, name) {
+    /** A speaker's effect on or off (null): a built-in recipe's name ('megaphone'), or a recipe of its own (a world
+     *  voice's sound, SetWorldVoiceSound: a speaker's). Swapped in place, even mid-sentence; the same one again
+     *  changes nothing. */
+    function setFx(id, fx) {
         const v = voices.get(id);
         if (!v) return;
-        const want = name && VoiceFx.has(name) ? name : null;
-        if ((v.fx ? v.fx.name : null) === want) return;
-        if (v.plugged) { try { v.source.disconnect(into(v)); } catch (_) { /* not connected */ } }
+        const recipe = Array.isArray(fx) && fx.length > 0;
+        const want = recipe ? 'r:' + JSON.stringify(fx) : (fx && VoiceFx.has(fx) ? fx : null);
+        if ((v.fx ? v.fx.key : null) === want) return;
+        // (Music's delay stays joined to whatever comes after it; a voice's source is plugged straight in.)
+        const feed = v.delay || (v.plugged ? v.source : null);
+        if (feed) { try { feed.disconnect(into(v)); } catch (_) { /* not connected */ } }
         if (v.fx) v.fx.dispose();
-        v.fx = want ? VoiceFx.named(context(), want) : null;
+        v.fx = !want ? null : recipe ? VoiceFx.chain(context(), fx) : VoiceFx.named(context(), want);
+        if (v.fx) v.fx.key = want;
         if (v.fx) {
-            v.fx.connect(v.filter);
+            v.fx.connect(v.post || v.filter);
             if (v.plugged) { v.fx.plug(); if (v.live) v.fx.live(true); }
         }
-        if (v.plugged) v.source.connect(into(v));
+        if (feed) feed.connect(into(v));
+    }
+
+    /** Heard as music (a world voice made with `music`: a speaker, a song) or as a voice: music arrives late by its
+     *  distance (so the Doppler effect), loses treble to the air while its bass carries, and washes outdoors. A voice
+     *  in a conversation has none of it (it would lag). The same again changes nothing. */
+    function setSpace(id, on) {
+        const v = voices.get(id);
+        if (!v || v.music === !!on) return;
+        const c = context();
+        v.music = !!on;
+        if (v.music) {
+            const was = into(v);              // (where its source went in before the junction)
+            // The junction after its effect: its own way's filter, and its second way's branch (altOf) when it has one.
+            v.post = c.createGain();
+            v.post.connect(v.filter);
+            if (v.fx) v.fx.connect(v.post);
+            v.delay = c.createDelay(DELAY_MAX + 0.1);
+            v.delay.delayTime.value = v.head && lastPose ? Math.min(DELAY_MAX, distanceOf(v, lastPose) / SOUND_SPEED) : 0;
+            v.delay.connect(into(v));
+            if (v.plugged) {
+                try { v.source.disconnect(was); } catch (_) { /* not connected */ }
+                v.source.connect(v.delay);
+            }
+            v.wash = c.createGain();
+            v.wash.gain.value = v.plugged ? washOf(v) : 0;
+            v.top.connect(v.wash);
+            v.wash.connect(washIn);
+        } else {
+            dropAlt(v);
+            if (v.fx) v.fx.connect(v.filter);
+            const now = v.fx ? v.fx.input : v.filter;
+            if (v.plugged) {
+                try { v.source.disconnect(v.delay); } catch (_) { /* not connected */ }
+                v.source.connect(now);
+            }
+            try { v.delay.disconnect(); v.top.disconnect(v.wash); v.wash.disconnect(); v.post.disconnect(); } catch (_) { /* already */ }
+            v.delay = null;
+            v.wash = null;
+            v.post = null;
+        }
+        v.bassDb = v.topDb = null;     // (the tone is worked out again at the next pose)
+        wireWash();
+    }
+
+    // MUSIC'S SECOND WAY ROUND (client/environment.lua secondWay): round a corner, music is also heard through another
+    // opening, from that opening's corner, as loud as its own length and bends make it: a branch of its own off the
+    // junction after its effect (its own extra delay, muffle, air, 3D), joined only while it has a second way.
+    function altOf(v) {
+        if (v.alt) return v.alt;
+        const c = ctx;
+        const a = {
+            delay: c.createDelay(1.0),          // how much later than its first way it arrives (it is longer)
+            filter: biquad(c, 'lowpass', 22000, 0.7),
+            occ: c.createGain(),
+            top: biquad(c, 'highshelf', TOP_HZ, 0.7),
+            panner: c.createPanner(),
+            gain: c.createGain(),
+            at: null, path: null, loud: 0, occTo: 0, topDb: null, hooked: false, quietAt: 0,
+        };
+        a.occ.gain.value = 0;
+        a.gain.gain.value = 0;
+        a.top.gain.value = 0;
+        a.panner.panningModel = hrtf ? 'HRTF' : 'equalpower';
+        a.panner.distanceModel = 'linear';
+        a.panner.rolloffFactor = 0;
+        a.delay.connect(a.filter);
+        a.filter.connect(a.occ);
+        a.occ.connect(a.top);
+        a.top.connect(a.panner);
+        a.panner.connect(a.gain);
+        a.gain.connect(master);
+        v.alt = a;
+        return a;
+    }
+
+    /** Its second way's branch joined to its junction or let go of (an idle 3D still costs the page its work). */
+    function hookAlt(v, on) {
+        const a = v.alt;
+        if (!a || !v.post || a.hooked === on) return;
+        a.hooked = on;
+        if (on) v.post.connect(a.delay);
+        else { try { v.post.disconnect(a.delay); } catch (_) { /* not joined */ } }
+    }
+
+    function dropAlt(v) {
+        if (!v.alt) return;
+        hookAlt(v, false);
+        try { v.alt.gain.disconnect(); } catch (_) { /* gone */ }
+        v.alt = null;
+    }
+
+    const ALT_IDLE_MS = 1500;   // a second way gone this long: its branch let go of
+
+    // A GLIDE WHEN ITS WAY MOVES: where music seems to come from (the corner of its way, or itself) slides to a new
+    // corner rather than jumping there, over about half a second, when it moves further than GLIDE_JUMP at once (a new
+    // way round, the corner given up for a clear line). Moving with it as it moves (a car going by) is not a glide.
+    const GLIDE_JUMP = 3.0;     // metres in one pose
+    const GLIDE_TAU = 0.25;     // seconds
+
+    // A BRANCH QUIET A WHILE STARTS AGAIN WHERE IT IS NEXT HEARD FROM, with no slide: nothing was heard from it in
+    // between (its way taken up again at another corner, or its first way back after the second carried the sound:
+    // client/environment.lua keepSides).
+    const QUIET = 0.02;          // a branch's muffle volume at or below this: silent
+    const QUIET_MS = 400;        // ...for this long: faded out
+
+    /** A branch's (a voice's, or its second way's) new muffle volume `g`, with when it went quiet. */
+    function quieted(h, g) {
+        const now = performance.now();
+        const faded = h.occTo <= QUIET && h.quietSince > 0 && now - h.quietSince > QUIET_MS;
+        if (g <= QUIET) { if (!(h.occTo <= QUIET) || !h.quietSince) h.quietSince = now; }
+        else { h.quietSince = 0; if (faded) h.gPos = null; }
+        h.occTo = g;
+    }
+
+    /** Where `h` (a voice, or its second way) seems to come from now, towards `target`, glided. */
+    function glided(h, target, t) {
+        if (!h.gPos) { h.gPos = target.slice(0, 3); h.gT = t; return h.gPos; }
+        const dt = Math.max(0, t - h.gT);
+        h.gT = t;
+        const dx = target[0] - h.gPos[0], dy = target[1] - h.gPos[1], dz = target[2] - h.gPos[2];
+        const dist = Math.hypot(dx, dy, dz);
+        if (!h.gliding && dist > GLIDE_JUMP) h.gliding = true;
+        if (!h.gliding || dist < 0.25) { h.gliding = false; h.gPos = target.slice(0, 3); return h.gPos; }
+        const f = Math.min(1, dt / GLIDE_TAU);
+        h.gPos = [h.gPos[0] + dx * f, h.gPos[1] + dy * f, h.gPos[2] + dz * f];
+        return h.gPos;
+    }
+
+    /** Music's delay: its distance at the speed of sound. Slid to the new distance over the time to the next pose, so
+     *  while it changes the song plays a little faster (coming closer) or slower (going away), by just the speed: the
+     *  Doppler effect. Never slid faster than DOPPLER_MAX; a jump (a teleport, a new place) is made at once. */
+    function setDelay(v, d, t) {
+        const p = v.delay.delayTime;
+        const want = Math.min(DELAY_MAX, d / SOUND_SPEED);
+        const was = p.value;
+        const gap = v.poseAt > 0 ? Math.max(0.02, Math.min(0.3, t - v.poseAt)) : 0.05;
+        v.poseAt = t;
+        p.cancelScheduledValues(t);
+        if (Math.abs(want - was) > DELAY_JUMP) { p.setValueAtTime(want, t); return; }
+        p.setValueAtTime(was, t);
+        p.linearRampToValueAtTime(want, t + Math.max(gap, Math.abs(want - was) / DOPPLER_MAX));
     }
 
     /** Plug a voice's chain in: put it where it was last seen first, so its first word is in place. */
@@ -321,21 +557,31 @@ window.VoiceAudio = (() => {
         const t = ctx.currentTime;
         if (v.head && lastPose) { const d = distanceOf(v, lastPose); v.loud = fade(d, v.range, v.full); tone(v, d); } else v.loud = 0;
         v.gain.gain.cancelScheduledValues(t);
-        v.gain.gain.setValueAtTime(v.loud, t);
+        v.gain.gain.setValueAtTime(v.loud * v.share, t);
         v.send.gain.cancelScheduledValues(t);
-        v.send.gain.setValueAtTime(sendLevel * v.loud, t);
+        v.send.gain.setValueAtTime(sendLevel * v.loud * v.share, t);
+        if (v.wash) {
+            v.wash.gain.cancelScheduledValues(t);
+            v.wash.gain.setValueAtTime(washOf(v), t);
+            // (Its delay as it stands now, not slid there from where it was last heard.)
+            v.delay.delayTime.cancelScheduledValues(t);
+            v.delay.delayTime.setValueAtTime(v.head && lastPose ? Math.min(DELAY_MAX, distanceOf(v, lastPose) / SOUND_SPEED) : 0, t);
+            v.poseAt = 0;
+        }
         if (v.head && lastPose) aim(v, lastPose);
         if (v.fx) v.fx.plug();
-        v.source.connect(into(v));
+        v.source.connect(inlet(v));
         v.source.connect(v.analyser);
+        if (v.music) wireWash();
     }
 
     function unplug(v) {
         if (!v.plugged) return;
         v.plugged = false;
-        try { v.source.disconnect(into(v)); v.source.disconnect(v.analyser); } catch (_) { /* already */ }
+        try { v.source.disconnect(inlet(v)); v.source.disconnect(v.analyser); } catch (_) { /* already */ }
         if (v.fx) v.fx.unplug();
         v.talking = false;
+        if (v.music) wireWash();
     }
 
     /** The speaker pressed (true) or let go of (false) push-to-talk. */
@@ -363,8 +609,11 @@ window.VoiceAudio = (() => {
         // on it are cut, never everything it feeds.
         unplug(v);
         try { v.gain.disconnect(); v.send.disconnect(); } catch (_) { /* already gone */ }
+        dropAlt(v);
+        if (v.delay) { try { v.delay.disconnect(); v.wash.disconnect(); v.post.disconnect(); } catch (_) { /* already gone */ } }
         if (v.fx) v.fx.dispose();
         voices.delete(id);
+        if (v.music) wireWash();
         if (wasTalking) reportTalkers();
     }
 
@@ -394,11 +643,31 @@ window.VoiceAudio = (() => {
             const a = list[id];
             const hz = a && a.f > 0 ? Math.min(22000, a.f) : 22000;
             const g = a && a.g < 0 ? Math.pow(10, a.g / 20) : 1;
-            v.filter.frequency.setTargetAtTime(hz, t, 0.08);
-            v.occ.gain.setTargetAtTime(g, t, 0.08);
+            // Glided over about half a second: walking round a corner dulls the sound smoothly, never in steps.
+            v.filter.frequency.setTargetAtTime(hz, t, 0.15);
+            v.occ.gain.setTargetAtTime(g, t, 0.15);
+            quieted(v, g);                       // (occTo: its muffle, for its share among its group: shareGroups)
             // Heard from the doorway it comes out of, over the longer way round.
             v.at = a && Array.isArray(a.at) ? a.at : null;
             v.path = a && a.p > 0 ? a.p : null;
+            // Music's second way round (altOf): taken up, or faded out and let go of once idle.
+            if (v.music && v.post) {
+                if (a && a.g2 != null && Array.isArray(a.at2)) {
+                    const alt = altOf(v);
+                    const g2 = Math.pow(10, Math.min(0, a.g2) / 20);
+                    alt.filter.frequency.setTargetAtTime(Math.min(22000, a.f2 > 0 ? a.f2 : 22000), t, 0.15);
+                    alt.occ.gain.setTargetAtTime(g2, t, 0.15);
+                    quieted(alt, g2);
+                    alt.at = a.at2;
+                    alt.path = a.p2 > 0 ? a.p2 : null;
+                    alt.quietAt = 0;
+                    hookAlt(v, true);
+                } else if (v.alt && v.alt.occTo > 0) {
+                    v.alt.occ.gain.setTargetAtTime(0, t, 0.15);
+                    quieted(v.alt, 0);
+                    v.alt.quietAt = performance.now();
+                }
+            }
         }
     }
 
@@ -436,6 +705,7 @@ window.VoiceAudio = (() => {
         // `all: false` is a lighter pose carrying only some heads (the others are unchanged). A head of `false` (or
         // missing from a full pose) is a speaker this game cannot place: silent.
         const full = m.all !== false;
+        let grouped = false;
         for (const [id, v] of voices) {
             const head = m.s && m.s[id];
             if (head) v.head = head;
@@ -452,8 +722,40 @@ window.VoiceAudio = (() => {
             const d = distanceOf(v, lastPose);
             v.loud = fade(d, v.range, v.full);
             tone(v, d);
+            if (v.delay) setDelay(v, d, t);
+            // Music's second way round: from its own corner, as far as its own length, later by the extra length.
+            const alt = v.alt && v.alt.hooked ? v.alt : null;
+            if (alt && alt.occTo === 0 && alt.quietAt && performance.now() - alt.quietAt > ALT_IDLE_MS) {
+                hookAlt(v, false);
+            } else if (alt && alt.at) {
+                aimAlt(alt, lastPose);
+                const h = lastPose.h;
+                const d2 = alt.path || Math.hypot(alt.at[0] - h[0], alt.at[1] - h[1], alt.at[2] - h[2]);
+                alt.loud = fade(d2, v.range, v.full);
+                const near = v.full > 0 ? Math.min(v.full, (v.range || 8) - 1) : 0;
+                const top = Math.round(-Math.min(15, Math.max(0, d2 - near) * 0.15) * 2) / 2 || 0;   // the air's, as tone
+                if (top !== alt.topDb) { alt.topDb = top; alt.top.gain.value = top; }
+                alt.delay.delayTime.setTargetAtTime(Math.min(0.9, Math.max(0, (d2 - d) / SOUND_SPEED)), t, 0.1);
+            }
+            // (Its volume once its group's shares and its two ways' are known.)
+            if (v.group || (v.alt && v.alt.hooked)) { grouped = true; continue; }
             v.gain.gain.setTargetAtTime(v.loud, t, 0.05);
             v.send.gain.setTargetAtTime(sendLevel * v.loud, t, 0.05);
+            if (v.wash) v.wash.gain.setTargetAtTime(washOf(v), t, 0.05);
+        }
+        // Places of one voice, and music heard by two ways: their volumes by their shares (shareGroups), every such
+        // voice plugged in and placed, the ones this pose did not move too (their share may have changed).
+        if (!grouped) return;
+        shareGroups();
+        for (const v of voices.values()) {
+            if (!v.plugged || !v.head) continue;
+            const alt = v.alt && v.alt.hooked ? v.alt : null;
+            if (!v.group && !alt) continue;
+            const s = v.k * v.share;
+            v.gain.gain.setTargetAtTime(v.loud * s, t, 0.05);
+            v.send.gain.setTargetAtTime(sendLevel * v.loud * s, t, 0.05);
+            if (v.wash) v.wash.gain.setTargetAtTime(washOf(v), t, 0.05);
+            if (alt) alt.gain.gain.setTargetAtTime(alt.loud * s, t, 0.05);
         }
     }
 
@@ -462,7 +764,8 @@ window.VoiceAudio = (() => {
      *  Firmer left and right (Config.SideSeparation): a head only shadows high notes, so the far ear is also turned
      *  down, by up to sideDb for someone straight to one side, nothing straight ahead or behind. */
     function aim(v, P) {
-        const from = v.at || v.head;
+        // (Music glides to a new corner: glided.)
+        const from = v.music ? glided(v, v.at || v.head, ctx.currentTime) : (v.at || v.head);
         const q = wa(from[0], from[1], from[2]);
         const d = [q[0] - P.p[0], q[1] - P.p[1], q[2] - P.p[2]];
         const right = d[0] * P.r[0] + d[1] * P.r[1] + d[2] * P.r[2];
@@ -477,6 +780,17 @@ window.VoiceAudio = (() => {
         const t = ctx.currentTime;
         v.earL.gain.setTargetAtTime(side > 0 ? far : 1, t, 0.05);
         v.earR.gain.setTargetAtTime(side < 0 ? far : 1, t, 0.05);
+    }
+
+    /** Point music's second way at its corner (glided), as aim does its first. */
+    function aimAlt(a, P) {
+        const from = glided(a, a.at, ctx.currentTime);
+        const q = wa(from[0], from[1], from[2]);
+        const d = [q[0] - P.p[0], q[1] - P.p[1], q[2] - P.p[2]];
+        place(a.panner,
+            d[0] * P.r[0] + d[1] * P.r[1] + d[2] * P.r[2],
+            d[0] * P.u[0] + d[1] * P.u[1] + d[2] * P.u[2],
+            -(d[0] * P.f[0] + d[1] * P.f[1] + d[2] * P.f[2]));
     }
 
     /** How far a voice travels to this player: head to head, or the way round via a doorway. */
@@ -518,7 +832,7 @@ window.VoiceAudio = (() => {
         if (changed) reportTalkers();
     }, 100);
 
-    return { add, addInput, remove, setLive, setRange, setFx, clear, pose, volume, context, setFullWithin,
+    return { add, addInput, remove, setLive, setRange, setFx, setSpace, clear, pose, volume, context, setFullWithin,
         ids: () => [...voices.keys()], has: (id) => voices.has(id),
         // The people around's mix (after the voice volume, before the limiter).
         output: () => { context(); return master; },

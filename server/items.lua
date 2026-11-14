@@ -1,15 +1,15 @@
 -- ============================================
--- whip_voice — the voice items: a megaphone and a radio
+-- whip_voice — the voice items: a megaphone, a radio and a speaker
 -- ============================================
 --
 -- THE ITEMS BELONG TO "THE VOICE SYSTEM", not to this resource. A voice resource of the owner's own,
 -- run instead of this one, registers these same keys, so a player's inventory means the same whichever
 -- runs. The one running registers them — whip lets the first resource that registers a key own it.
 --
--- What they DO here: server/megaphone.lua and server/radio.lua.
+-- What they DO here: server/megaphone.lua, server/radio.lua and server/speakers.lua.
 --
--- Pictures: html/img/items/megaphone.png and radio.png (whip finds them by the item's key; a .webp of
--- the same name would be used first). The megaphone in the hand is stream/prop_megaphone_01.ydr.
+-- Pictures: html/img/items/megaphone.png, radio.png and speaker.webp (whip finds them by the item's key; a .webp
+-- of the same name would be used first). The megaphone in the hand is stream/prop_megaphone_01.ydr.
 
 VoiceItems = {
     megaphone = {
@@ -29,6 +29,15 @@ VoiceItems = {
         stack  = false,
         usable = true,
         prop   = 'prop_cs_walkie_talkie',
+    },
+    speaker = {
+        name   = 'Speaker',
+        desc   = 'A portable speaker. Put it down anywhere, or on a car, give it a song and play it for everyone around. Behind it: the song, Play and Stop, Volume, Range, Pick up.',
+        weight = 6.0,
+        type   = 'tool',
+        stack  = false,
+        usable = true,
+        prop   = (Config.Speaker and Config.Speaker.model) or 'ba_prop_battle_club_speaker_small',
     },
 }
 

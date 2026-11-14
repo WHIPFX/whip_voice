@@ -90,6 +90,25 @@ Config.Radio = {
     uiSounds      = true,        -- the 3D radio's key and power beeps; false for none (the talk beeps stay)
 }
 
+-- ---- The speaker (an item) --------------------------------------------------------------------
+--
+-- Use it and put it down exactly where you want it: on the ground, a table, or a car's roof, where it
+-- rides the car (the mouse wheel turns it, the arrow keys raise and lower it). Behind it: Song link
+-- (paste the song's link), Play / Stop, Volume, Range, Pick up. Everyone near hears it, as music:
+-- from far off it comes late and loses its treble, and on a passing car it rises and falls in pitch.
+-- Its song, volume and range stay with the item when it is picked up. A server restart gives every
+-- speaker that was out back to whoever put it down (their pockets, or at their feet if full).
+Config.Speaker = {
+    model        = 'ba_prop_battle_club_speaker_small',   -- what it looks like
+    links        = { 'https://r2.fivemanage.com/' },       -- the only links it plays: where your songs are uploaded
+    volume       = 100,   -- a new speaker's volume, % (0-200)
+    range        = 30,    -- a new speaker's range, metres
+    maxRange     = 300,   -- the furthest a player may set one to carry, metres (300 at most)
+    drawDistance = 300,   -- how far away a speaker is seen, metres (up to 500)
+    maxPerPlayer = 3,     -- speakers one character may have out at once
+    maxPlaced    = 64,    -- speakers out on the whole server at once
+}
+
 -- ---- The world around the voice --------------------------------------------------------------
 --
 -- Voices travel like GTA's own sounds: through the doorways and windows between rooms. Yell inside a
@@ -111,7 +130,10 @@ Config.Muffle = {
     doorway = 3,    -- an open doorway or open door
     door    = 12,   -- a closed door
     window  = 12,   -- a window (the glass lets a little more treble through than a door)
-    wall    = 14,   -- a wall or building in the way outdoors
+    wall    = 14,   -- a wall or building in the way outdoors, with no way round it
+    around  = 6,    -- outdoors, the sound bending round a corner (a right angle) to reach you: less for a smaller
+                    -- bend (a post is about 1, a corner just passed 2 to 4), a little more for a U-turn; each corner
+                    -- on its way adds its own. How far round it goes is the distance's own fade, not this.
     car     = 9,    -- a closed car's body
 }
 

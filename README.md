@@ -11,11 +11,13 @@ whip_voice runs its own voice server alongside your FiveM server, so there's not
 - **3D voices.** Each voice comes from the player's head and fades with distance. Players switch between whisper,
   normal and shout.
 - **Rooms, walls and cars.** Voices carry through open doorways and are muffled by closed doors, windows, walls,
-  closed cars and water. Rooms echo by their size.
+  closed cars and water. Rooms echo by their size. Outdoors, sound goes round corners and over low walls.
 - **Phone calls.** Calls carry the phone's sound. On speaker, everyone near the phone takes part.
 - **Radio.** A walkie-talkie item with a 3D radio on screen. Players on the same frequency hear each other, with
   static as they get further apart.
 - **Megaphone.** An item that carries the voice six times as far, with a bullhorn sound.
+- **Speaker.** An item that plays a song for everyone around, put down anywhere or on a car. Music is heard as from far
+  off: it comes late and loses its treble with distance, and a speaker on a passing car rises and falls in pitch.
 - **Private.** The server decides who hears whom. A modified game can't listen in on calls or radio frequencies.
 - **Characters that talk.** WHIP's Director can have its characters phone players and speak in the world.
 

@@ -1,0 +1,486 @@
+-- ============================================
+-- whip_voice — the way round, outdoors
+-- ============================================
+--
+-- Outdoors the map has no rooms and doorways. So when a voice's straight line to the listener is blocked (a building's
+-- corner, a walled yard with one way in), whip_voice finds the way the sound really goes on a grid of the open ground:
+-- 2 m squares, each a point at head height above its ground, joined to its eight neighbours where nothing stands between
+-- them (a ray each, kept a minute). The shortest way through them, pulled straight to the corner it bends round, is how
+-- far the sound travels; how sharply it bends there decides the muffle (Acoustics.around); and that corner is where it
+-- seems to come from.
+--
+-- A WAY, ONCE FOUND, IS FOLLOWED: it keeps its points pulled straight, from the furthest the listener saw (its anchor)
+-- to the voice, and each pass the corner is found again from where the listener now stands: on along the way to the
+-- last point they still see, then along the line from it to the next (Ways.follow: a few rays). So walking about, the
+-- bend changes a little at each step and so does the sound; walking on along the way (down the alley it comes along),
+-- the corner moves on ahead with them, to the end of the alley, rather than staying where the alley was entered; and no
+-- search is needed until the listener can no longer see the anchor.
+--
+-- A search spends rays out of a budget the caller hands it each pass, and squares out of a quota; when either runs out
+-- it pauses, and the next pass carries on where it stopped (every ray's answer is kept, too).
+--
+--   local s = Ways.start(from, to, own, maxLen)
+--   Ways.step(s, budget, quota) -> way | false (no way within maxLen) | nil (not done yet: step it again next pass)
+--   Ways.follow(way, from, to, own, budget) -> { len, at, d, turns, after } | false (from no longer sees the way) | nil (no rays)
+--   Ways.moved(answer, was, from, to) -> the answer from `from` instead of `was`, no rays (the same corner)
+--     from, to   {x, y, z}: the listener's head, the voice
+--     own        the voice's own object (a speaker's prop: a ray to its middle ends inside it), or nil
+--     maxLen     metres: a way longer than this cannot be heard, so it is not looked for
+--     budget     { left = rays it may spend }; what it spent is taken off
+--   len  metres the sound travels   at  {x, y, z} the corner it is heard from   d  metres more than the straight line
+--   turns  degrees it bends at each corner   after  the way's next point after its corner
+
+Ways = {}
+
+local CELL = 2.0            -- metres per square
+local ABOVE = 1.5           -- a square's point: this high above its ground
+local CLIMB = 2.0           -- neighbours further apart in height than this are not joined (a wall top, a cliff)
+local MAX_SQUARES = 2000    -- squares one search looks at, at most (over as many passes as it takes)
+-- A STEP IS TRIED WHEN THE SEARCH TAKES IT. Every square's eight joins were looked at as it was reached, up to 24 rays a
+-- square, and a pass's rays reached only a few squares: across a car park a search took over three seconds, the music
+-- muffled as if through a wall all that while and then suddenly clear (the voice simulator, 14 Nov 2026). Now a square's
+-- neighbours are only placed (their ground), and the join to one is looked at when the search goes on from it; one that
+-- is not joined there is reached from its best other neighbour already reached that is.
+local EXPAND_RAYS = 18      -- rays one step can take at most (its join, its neighbours' grounds, joins from the others)
+local KEEP_MS = 60000       -- what a ray found is kept this long (props, gates and doors come and go)
+local BAND = 6.0            -- a square's ground is looked for again by a search starting this much higher or lower
+local MAX_KEPT = 20000      -- answers kept; past this they are all forgotten and found again
+local EDGE_STEPS = 6        -- halvings to find a corner (to 1/64 of the line it is on)
+-- EVERY CORNER ON THE WAY IS A BEND. A way found further round was given only two bends, the corner the listener sees
+-- and the one the voice sees, and round a block between them it lost the right angles in the middle: three corners
+-- heard as one slight bend, near clear, two streets away (the voice simulator, 14 Nov 2026). Its squares, pulled
+-- straight to within SIMPLE (no rays: their own zigzag is less), give its corners; corners nearer each other than MERGE
+-- are one (a corner cut on the slant).
+local SIMPLE = 2.5          -- metres
+local MERGE = 4.0           -- metres
+
+local probe                 -- probe(from, to, flags, ignore) -> answered, hit, pos, entity (client/environment.lua)
+function Ways.setProbe(fn) probe = fn end
+
+local grounds = {}   -- [square] = { z = its ground (false: none found), top = where the ray down began, at = when }
+local joins = {}     -- [square * 4 + direction] = { open, at }
+local kept = 0
+
+local OFF = 50000
+local function keyOf(cx, cy) return (cx + OFF) * 100000 + (cy + OFF) end
+
+local function len(a, b)
+    local dx, dy, dz = a[1] - b[1], a[2] - b[2], a[3] - b[3]
+    return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+local function pointOf(cx, cy, z) return { (cx + 0.5) * CELL, (cy + 0.5) * CELL, z + ABOVE } end
+
+-- The eight neighbours: { dx, dy, join direction, kept under the neighbour }. Each join is kept once, under the square
+-- it goes forward from (directions 0..3: east, north, north-east, north-west).
+local NEIGHBOURS = {
+    { 1, 0, 0, false }, { 0, 1, 1, false }, { 1, 1, 2, false }, { -1, 1, 3, false },
+    { -1, 0, 0, true }, { 0, -1, 1, true }, { -1, -1, 2, true }, { 1, -1, 3, true },
+}
+
+local function spend(budget)
+    if budget.left < 1 then return false end
+    budget.left = budget.left - 1
+    return true
+end
+
+--- A square's ground: its height, false for none (inside a building's block, no map loaded), nil when unknown and no
+--- rays are left. Looked for straight down from `top`: a roof lower than that is the ground there.
+local function groundOf(cx, cy, top, budget, now)
+    local k = keyOf(cx, cy)
+    local g = grounds[k]
+    if g and now - g.at < KEEP_MS and math.abs(g.top - top) < BAND then return g.z end
+    if not spend(budget) then return nil end
+    local x, y = (cx + 0.5) * CELL, (cy + 0.5) * CELL
+    local answered, hit, pos = probe({ x, y, top }, { x, y, top - 12.0 }, 1)
+    if not answered then return nil end
+    if not g then kept = kept + 1 end
+    grounds[k] = { z = (hit and pos) and pos.z or false, top = top, at = now }
+    return grounds[k].z
+end
+
+--- Is a square joined to one of its neighbours? true, false, or nil when unknown and no rays are left. The ray goes
+--- FROM the square being looked round (reached from the listener, so in the open) to the neighbour, so a wall between
+--- is met from its outside.
+local function joined(cx, cy, nb, top, budget, now)
+    local ox, oy = cx, cy
+    if nb[4] then ox, oy = cx + nb[1], cy + nb[2] end
+    local k = keyOf(ox, oy) * 4 + nb[3]
+    local j = joins[k]
+    if j and now - j.at < KEEP_MS then return j.open end
+    local za = groundOf(cx, cy, top, budget, now)
+    if za == nil then return nil end
+    local zb = groundOf(cx + nb[1], cy + nb[2], top, budget, now)
+    if zb == nil then return nil end
+    local open = false
+    if za and zb and math.abs(za - zb) <= CLIMB then
+        if not spend(budget) then return nil end
+        local answered, hit = probe(pointOf(cx, cy, za), pointOf(cx + nb[1], cy + nb[2], zb), 1 + 16)
+        if not answered then return nil end
+        open = not hit
+    end
+    if not j then kept = kept + 1 end
+    joins[k] = { open = open, at = now }
+    return open
+end
+
+--- Does `p` see `q`? (The voice's own object in the way does not count: the ray passes through it, so a ray from
+--- inside it still meets what stands behind it.) nil when no rays are left.
+local function sees(p, q, own, budget)
+    if not spend(budget) then return nil end
+    local answered, hit, _, ent = probe(p, q, 1 + 16, own)
+    if not answered then return nil end
+    return not hit or (own ~= nil and own ~= 0 and ent == own)
+end
+
+--- The furthest point along p -> q that `eye` sees (it sees p), by halving. nil when no rays are left.
+local function edgeOf(eye, p, q, own, budget)
+    if budget.left < EDGE_STEPS then return nil end
+    local lo, hi = 0.0, 1.0
+    for _ = 1, EDGE_STEPS do
+        local mid = (lo + hi) / 2
+        if sees(eye, { p[1] + (q[1] - p[1]) * mid, p[2] + (q[2] - p[2]) * mid, p[3] + (q[3] - p[3]) * mid }, own, budget) then
+            lo = mid
+        else
+            hi = mid
+        end
+    end
+    return { p[1] + (q[1] - p[1]) * lo, p[2] + (q[2] - p[2]) * lo, p[3] + (q[3] - p[3]) * lo }
+end
+
+--- Degrees a way turns at b, going a -> b -> c, seen from above.
+local function turnFlat(a, b, c)
+    local ux, uy, vx, vy = b[1] - a[1], b[2] - a[2], c[1] - b[1], c[2] - b[2]
+    local lu, lv = math.sqrt(ux * ux + uy * uy), math.sqrt(vx * vx + vy * vy)
+    if lu < 1e-6 or lv < 1e-6 then return 0 end
+    return math.deg(math.acos(math.max(-1, math.min(1, (ux * vx + uy * vy) / (lu * lv)))))
+end
+
+--- Where a way goes from where the listener now stands: the corner found again (on along the way while they see its
+--- next point, then along the line to the next), the way's length, how much longer than the straight line, its bends.
+--- false when `from` no longer sees the anchor (the way is no good from here); nil when no rays are left.
+---
+--- A WAY ROUND ON THE SQUARES BENDS ONLY AS SEEN FROM ABOVE. Its points are a head's height over the ground, and a
+--- speaker on the ground beside its corner made the last stretch dip steeply: a way past a van's end, heard as bending
+--- round it by 48 degrees where from above it bent by 3 (the voice simulator, 14 Nov 2026). (A way over the top of
+--- something, the close look's, bends up and over: that one is as it is.)
+---@param way table  { pts = { anchor, ..., the voice }, flat = a way on the squares } (Ways.step, or the close look)
+function Ways.follow(way, from, to, own, budget)
+    local turn = way.flat and turnFlat or Acoustics.turn
+    local pts = way.pts
+    local n = #pts
+    if budget.left < EDGE_STEPS + n then return nil end
+    local seen = sees(from, pts[1], own, budget)
+    if seen == nil then return nil end
+    if not seen then return false end
+    local i = 1
+    while i < n - 1 do
+        local s = sees(from, pts[i + 1], own, budget)
+        if s == nil then return nil end
+        if not s then break end
+        i = i + 1
+    end
+    local c = edgeOf(from, pts[i], pts[i + 1], own, budget)
+    if not c then return nil end
+    local total = len(from, c) + len(c, pts[i + 1])
+    local turns = { turn(from, c, pts[i + 1]) }
+    local prev = c
+    for j = i + 1, n - 1 do
+        total = total + len(pts[j], pts[j + 1])
+        turns[#turns + 1] = turn(prev, pts[j], pts[j + 1])
+        prev = pts[j]
+    end
+    return { len = total, at = c, d = math.max(0, total - len(from, to)), turns = turns, after = pts[i + 1], flat = way.flat }
+end
+
+--- A way's answer moved to where the listener now stands, without a ray: the same corner, the length and first bend
+--- from here (while a search for a better one goes on, so the sound does not stay where the listener was).
+function Ways.moved(f, was, from, to)
+    if type(f) ~= 'table' or not f.at or not was then return f end
+    local total = f.len - len(was, f.at) + len(from, f.at)
+    local turn = f.flat and turnFlat or Acoustics.turn
+    local turns = { f.after and turn(from, f.at, f.after) or f.turns[1] }
+    for i = 2, #f.turns do turns[i] = f.turns[i] end
+    return { len = total, at = f.at, d = math.max(0, total - len(from, to)), turns = turns, after = f.after,
+             flat = f.flat, found = f.found or was }   -- (where it was really found)
+end
+
+-- A small binary heap of steps by their estimate: f, the square, the square it is reached from (false: a start), the
+-- metres to it that way. (Four arrays side by side: h.f, h.k, h.p, h.g.)
+local function swap(h, i, j)
+    h.f[i], h.f[j] = h.f[j], h.f[i]
+    h.k[i], h.k[j] = h.k[j], h.k[i]
+    h.p[i], h.p[j] = h.p[j], h.p[i]
+    h.g[i], h.g[j] = h.g[j], h.g[i]
+end
+
+local function push(h, f, k, p, g)
+    local i = #h.f + 1
+    h.f[i], h.k[i], h.p[i], h.g[i] = f, k, p, g
+    while i > 1 do
+        local up = i // 2
+        if h.f[up] <= h.f[i] then break end
+        swap(h, up, i)
+        i = up
+    end
+end
+
+local function pop(h)
+    local f, k, p, g = h.f[1], h.k[1], h.p[1], h.g[1]
+    local n = #h.f
+    swap(h, 1, n)
+    h.f[n], h.k[n], h.p[n], h.g[n] = nil, nil, nil, nil
+    n = n - 1
+    local i = 1
+    while true do
+        local l, r, s = i * 2, i * 2 + 1, i
+        if l <= n and h.f[l] < h.f[s] then s = l end
+        if r <= n and h.f[r] < h.f[s] then s = r end
+        if s == i then break end
+        swap(h, s, i)
+        i = s
+    end
+    return f, k, p, g
+end
+
+-- The neighbour step from one square to the next, by its dx, dy.
+local STEP = {}
+for _, nb in ipairs(NEIGHBOURS) do STEP[nb[1] * 3 + nb[2]] = nb end
+
+--- The squares a point reaches: those of the four nearest it it can see, { { cx, cy, point, metres } ... }; nil when
+--- no rays are left.
+local function attach(p, top, own, budget, now)
+    local x0, y0 = math.floor(p[1] / CELL - 0.5), math.floor(p[2] / CELL - 0.5)
+    local out = {}
+    for i = 0, 1 do
+        for j = 0, 1 do
+            local cx, cy = x0 + i, y0 + j
+            local z = groundOf(cx, cy, top, budget, now)
+            if z == nil then return nil end
+            if z then
+                local q = pointOf(cx, cy, z)
+                local s = sees(p, q, own, budget)
+                if s == nil then return nil end
+                if s then out[#out + 1] = { cx, cy, q, len(p, q) } end
+            end
+        end
+    end
+    return out
+end
+
+--- How far `p` is from the line a-b, flat.
+local function offLine(p, a, b)
+    local dx, dy = b[1] - a[1], b[2] - a[2]
+    local l2 = dx * dx + dy * dy
+    local t = l2 > 0 and math.max(0, math.min(1, ((p[1] - a[1]) * dx + (p[2] - a[2]) * dy) / l2)) or 0
+    local qx, qy = a[1] + dx * t - p[1], a[2] + dy * t - p[2]
+    return math.sqrt(qx * qx + qy * qy)
+end
+
+--- The points of a way kept when it is pulled straight to within SIMPLE (the first and last always).
+local function straightened(pts)
+    local keep = { [1] = true, [#pts] = true }
+    local todo = { { 1, #pts } }
+    while #todo > 0 do
+        local seg = table.remove(todo)
+        local i, j = seg[1], seg[2]
+        local worst, at = SIMPLE, nil
+        for k = i + 1, j - 1 do
+            local d = offLine(pts[k], pts[i], pts[j])
+            if d > worst then worst, at = d, k end
+        end
+        if at then
+            keep[at] = true
+            todo[#todo + 1] = { i, at }
+            todo[#todo + 1] = { at, j }
+        end
+    end
+    local out = {}
+    for k = 1, #pts do if keep[k] then out[#out + 1] = pts[k] end end
+    return out
+end
+
+local function flat(a, b)
+    local dx, dy = a[1] - b[1], a[2] - b[2]
+    return math.sqrt(dx * dx + dy * dy)
+end
+
+--- A way's points from its anchor to the voice, pulled straight, corners close together made one (MERGE: the first of
+--- them stands for them; one close by the voice is the voice).
+local function routeOf(pts)
+    local v = straightened(pts)
+    local out = { v[1] }
+    for k = 2, #v - 1 do
+        if flat(v[k], out[#out]) >= MERGE then out[#out + 1] = v[k] end
+    end
+    local last = v[#v]
+    if #out > 1 and flat(out[#out], last) < MERGE then out[#out] = last else out[#out + 1] = last end
+    return out
+end
+
+--- A new search for the way from `from` to `to`. `avoid`: { { x, y, r }, ... } areas its way may not go through (the
+--- second way round a music voice takes: through another opening than the first's corner, environment.lua).
+-- THE SQUARES' WAY IS LONGER THAN THE SOUND'S: it zigzags square to square, up to about a tenth longer once pulled
+-- straight. Looked for only within the voice's range, a way the sound takes at just under it was not found, so the sound
+-- came through the wall until a step brought the squares' way under, then jumped up (the voice simulator, 14 Nov 2026).
+-- So the search reaches SLACK further; a way longer than the range is silent anyway (the page's fade), so the change from
+-- the wall to it is where nothing is heard.
+local SLACK = 1.2
+
+function Ways.start(from, to, own, maxLen, avoid)
+    return { from = from, to = to, own = own, maxLen = (tonumber(maxLen) or 40) * SLACK,
+             top = math.max(from[3], to[3]) + 2.0, stage = 'attach', avoid = avoid }
+end
+
+--- May a search step from point `p` to `q`, by its areas to avoid? Not into one, nor further into one it is in: a
+--- search that starts inside one (the listener standing by the first way's corner) may only leave it, away from its
+--- middle, so it finds the way out through another opening rather than none.
+local function avoided(s, q, p)
+    local av = s.avoid
+    if not av then return false end
+    for i = 1, #av do
+        local a = av[i]
+        local dx, dy = q[1] - a[1], q[2] - a[2]
+        local dq = dx * dx + dy * dy
+        if dq < a[3] * a[3] then
+            local ex, ey = p[1] - a[1], p[2] - a[2]
+            if dq <= ex * ex + ey * ey + 0.01 then return true end   -- (into it, or no further out)
+        end
+    end
+    return false
+end
+
+--- Carry a search on: answers the way found, false for none within reach, nil for not done yet.
+function Ways.step(s, budget, quota)
+    if not probe then return false end
+    local now = GetGameTimer()
+    if kept > MAX_KEPT then grounds, joins, kept = {}, {}, 0 end
+    local from, to = s.from, s.to
+
+    if s.stage == 'attach' then
+        local starts = attach(from, s.top, nil, budget, now)
+        if not starts then return nil end
+        local ends = attach(to, s.top, s.own, budget, now)
+        if not ends then return nil end
+        if #starts == 0 or #ends == 0 then return false end
+        s.goal = {}   -- [square] = metres from it to `to`
+        for _, e in ipairs(ends) do s.goal[keyOf(e[1], e[2])] = e[4] end
+        s.g, s.parent, s.sq, s.closed = {}, {}, {}, {}
+        s.heap = { f = {}, k = {}, p = {}, g = {} }
+        s.best, s.looked = math.huge, 0
+        for _, st in ipairs(starts) do
+            local k = keyOf(st[1], st[2])
+            if not s.g[k] or st[4] < s.g[k] then
+                s.g[k], s.sq[k] = st[4], st
+                push(s.heap, st[4] + len(st[3], to), k, false, st[4])
+            end
+        end
+        s.stage = 'search'
+    end
+
+    if s.stage == 'search' then
+        -- The shortest way from `from`'s squares to `to`'s (A*: metres so far + the straight line still to go). g: the
+        -- metres to a square reached, or the least yet to one waiting.
+        local g, sq, closed, goal, h = s.g, s.sq, s.closed, s.goal, s.heap
+        local done = 0
+        while true do
+            local hf = h.f
+            if #hf == 0 or hf[1] >= s.best or hf[1] > s.maxLen or s.looked >= MAX_SQUARES then break end
+            if done >= quota or budget.left < EXPAND_RAYS then return nil end   -- carried on next pass
+            local f, k, pk, gk = pop(h)
+            if not closed[k] then
+                local c = sq[k]
+                -- The step to it, looked at now (kept a minute). Not joined: from its best neighbour reached that is,
+                -- waiting its turn again by those metres; none: not reached (another may reach it later).
+                local ok = true
+                if pk then
+                    local pc = sq[pk]
+                    ok = joined(pc[1], pc[2], STEP[(c[1] - pc[1]) * 3 + (c[2] - pc[2])], s.top, budget, now)
+                    if ok == nil then push(h, f, k, pk, gk) return nil end
+                    if not ok then
+                        local bk, bg = nil, math.huge
+                        for _, nb in ipairs(NEIGHBOURS) do
+                            local qk = keyOf(c[1] + nb[1], c[2] + nb[2])
+                            if closed[qk] and qk ~= pk then
+                                local qc = sq[qk]
+                                local ng = g[qk] + len(qc[3], c[3])
+                                if ng < bg and not avoided(s, c[3], qc[3])
+                                    and joined(qc[1], qc[2], STEP[-nb[1] * 3 - nb[2]], s.top, budget, now) then
+                                    bk, bg = qk, ng
+                                end
+                            end
+                        end
+                        if bk then
+                            g[k] = bg
+                            push(h, bg + len(c[3], to), k, bk, bg)
+                        else
+                            g[k] = nil
+                        end
+                    end
+                end
+                if ok then
+                    closed[k] = true
+                    s.parent[k], g[k] = pk or false, gk
+                    s.looked, done = s.looked + 1, done + 1
+                    if goal[k] and gk + goal[k] < s.best then s.best, s.bestK = gk + goal[k], k end
+                    -- Its neighbours placed (their ground), to be stepped to in turn.
+                    local cz = c[3][3] - ABOVE
+                    for _, nb in ipairs(NEIGHBOURS) do
+                        local nx, ny = c[1] + nb[1], c[2] + nb[2]
+                        local nk = keyOf(nx, ny)
+                        if not closed[nk] then
+                            local gz = groundOf(nx, ny, s.top, budget, now)
+                            if gz and math.abs(gz - cz) <= CLIMB then
+                                local q = pointOf(nx, ny, gz)
+                                if not avoided(s, q, c[3]) then
+                                    local ng = gk + len(c[3], q)
+                                    if not g[nk] or ng < g[nk] then
+                                        g[nk], sq[nk] = ng, { nx, ny, q }
+                                        push(h, ng + len(q, to), nk, k, ng)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        if not s.bestK then return false end
+        s.path = {}
+        local k = s.bestK
+        while k do
+            table.insert(s.path, 1, sq[k][3])
+            k = s.parent[k]
+        end
+        s.stage = 'pull'
+    end
+
+    -- Pulled straight: the furthest square `from` sees (what a point sees along a way is nearly always where the way
+    -- starts, so a halving search) is the anchor; from it on, the nearest square `to` sees.
+    local path, m = s.path, #s.path
+    if budget.left < 2 * math.ceil(math.log(m + 1, 2)) + EDGE_STEPS then return nil end
+    local lo, hi = 1, m
+    while lo < hi do
+        local mid = (lo + hi + 1) // 2
+        if sees(from, path[mid], nil, budget) then lo = mid else hi = mid - 1 end
+    end
+    local a = lo
+    lo, hi = a, m
+    while lo < hi do
+        local mid = (lo + hi) // 2
+        if sees(to, path[mid], s.own, budget) then hi = mid else lo = mid + 1 end
+    end
+    local b = lo
+    if b == a then
+        -- One bend: both see square a, and `to` sees all the line from it on to `to`.
+        return { pts = { path[a], to }, flat = true }
+    end
+    -- More: from square a, the squares as found to where `to` starts seeing (its own corner, found once), then `to`;
+    -- pulled straight, every corner on it is a bend (routeOf).
+    local c2 = edgeOf(to, path[b], path[b - 1], s.own, budget) or path[b]
+    local pts = {}
+    for i = a, b - 1 do pts[#pts + 1] = path[i] end
+    pts[#pts + 1] = c2
+    pts[#pts + 1] = to
+    return { pts = routeOf(pts), flat = true }
+end
