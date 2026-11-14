@@ -27,6 +27,7 @@ local heard = {}         -- [identity] = server id of the player that voice belo
                          -- at each.
 local heardRange = {}    -- [identity] = how far that voice carries (metres), from the server
 local heardFx = {}       -- [identity] = its effect ('megaphone', or a sound recipe), from the server: either gets through cars
+local heardMu = {}       -- [identity] = true for music (a world voice made with `music`): heard by two ways round corners
 local placesOf = {}      -- [identity] = { '<identity>#1', ... }: the places of a voice heard from several
 local talkers = {}       -- [identity] = true while the page hears them talking
 local anyTalkers = false
@@ -65,6 +66,7 @@ end)
 --- Forget everything about the voices heard (the connection dropped).
 local function forgetVoices()
     heard, heardRange, heardFx, talkers, anyTalkers, placesOf = {}, {}, {}, {}, false, {}
+    heardMu = {}
     live, anyLive = {}, false
     envCache, envAt = {}, {}
     pedOf, atOf = {}, {}
@@ -489,6 +491,7 @@ local startPose
 --- Forget one heard voice (or one place of a voice heard from several).
 local function forgetHeard(id)
     heard[id], heardRange[id], heardFx[id], talkers[id], live[id] = nil, nil, nil, nil, nil
+    heardMu[id] = nil
     pedOf[id], atOf[id], envCache[id], envAt[id] = nil, nil, nil, nil
 end
 
@@ -505,13 +508,13 @@ RegisterNetEvent('whip_voice:client:hear', function(msg)
                 local pid = e.id .. '#' .. i
                 heard[pid] = p.ent and { ent = p.ent, off = p.off, model = p.off and p.model or nil }
                     or { at = p.at, model = p.model }
-                heardRange[pid], heardFx[pid] = e.range, e.fx
+                heardRange[pid], heardFx[pid], heardMu[pid] = e.range, e.fx, e.mu == true or nil
                 list[i] = pid
             end
             placesOf[e.id] = list
         else
             heard[e.id] = e.ent and { ent = e.ent } or e.src
-            heardRange[e.id], heardFx[e.id] = e.range, e.fx
+            heardRange[e.id], heardFx[e.id], heardMu[e.id] = e.range, e.fx, e.mu == true or nil
         end
     end
     for _, id in ipairs(msg.remove or {}) do
@@ -686,7 +689,8 @@ startPose = function()
                             local every = (live[id] or talkers[id]) and ENV_LIVE_MS or ENV_QUIET_MS
                             if not envAt[id] or now - envAt[id] >= every then
                                 -- (A megaphone or a speaker's sound is loud: it gets through a car's cabin.)
-                                due[id] = { ped = ped or 0, head = where[id], range = heardRange[id], loud = heardFx[id] ~= nil }
+                                due[id] = { ped = ped or 0, head = where[id], range = heardRange[id], loud = heardFx[id] ~= nil,
+                                            mu = heardMu[id] }
                             end
                         else
                             where[id], atOf[id] = false, nil   -- this game cannot place them: silent
@@ -703,7 +707,7 @@ startPose = function()
                         local v = {}
                         for id, a in pairs(env.v) do
                             envCache[id], envAt[id] = a, now
-                            v[id] = { g = a.g, f = a.f, at = a.at, p = a.p }
+                            v[id] = { g = a.g, f = a.f, at = a.at, p = a.p, g2 = a.g2, f2 = a.f2, at2 = a.at2, p2 = a.p2 }
                         end
                         msg.e = { rv = env.rv or false, v = v }
                         VoiceEnv = { rv = env.rv, v = envCache }

@@ -209,10 +209,29 @@ local function attach(p, top, own, budget, now)
     return out
 end
 
---- A new search for the way from `from` to `to`.
-function Ways.start(from, to, own, maxLen)
+--- A new search for the way from `from` to `to`. `avoid`: { { x, y, r }, ... } areas its way may not go through (the
+--- second way round a music voice takes: through another opening than the first's corner, environment.lua).
+function Ways.start(from, to, own, maxLen, avoid)
     return { from = from, to = to, own = own, maxLen = tonumber(maxLen) or 40,
-             top = math.max(from[3], to[3]) + 2.0, stage = 'attach' }
+             top = math.max(from[3], to[3]) + 2.0, stage = 'attach', avoid = avoid }
+end
+
+--- May a search step from point `p` to `q`, by its areas to avoid? Not into one, nor further into one it is in: a
+--- search that starts inside one (the listener standing by the first way's corner) may only leave it, away from its
+--- middle, so it finds the way out through another opening rather than none.
+local function avoided(s, q, p)
+    local av = s.avoid
+    if not av then return false end
+    for i = 1, #av do
+        local a = av[i]
+        local dx, dy = q[1] - a[1], q[2] - a[2]
+        local dq = dx * dx + dy * dy
+        if dq < a[3] * a[3] then
+            local ex, ey = p[1] - a[1], p[2] - a[2]
+            if dq <= ex * ex + ey * ey + 0.01 then return true end   -- (into it, or no further out)
+        end
+    end
+    return false
 end
 
 --- Carry a search on: answers the way found, false for none within reach, nil for not done yet.
@@ -265,8 +284,8 @@ function Ways.step(s, budget, quota)
                         -- (A join kept from an earlier search whose square's ground has since been looked for again
                         -- and not found: not joined.)
                         local gz = open and grounds[nk] and grounds[nk].z
-                        if gz then
-                            local q = pointOf(nx, ny, gz)
+                        local q = gz and pointOf(nx, ny, gz) or nil
+                        if q and not avoided(s, q, c[3]) then
                             local ng = gk + len(c[3], q)
                             if not g[nk] or ng < g[nk] then
                                 g[nk], s.parent[nk], sq[nk] = ng, k, { nx, ny, q }

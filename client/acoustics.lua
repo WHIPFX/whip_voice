@@ -39,6 +39,7 @@ Acoustics.COST = {
 
 local OPEN_HZ = 22000
 local MAX_DB = 45          -- beyond this, it is silent anyway
+local SECOND_DB = 20       -- music's second way round is heard while it is within this of the first (else too faint)
 local STACK = 0.8          -- each extra obstacle lowers the cutoff a little further
 local STICKY = 1.5         -- dB head start for the opening a voice already comes through
 
@@ -448,6 +449,7 @@ function Acoustics.voice(L, S, interiors, doorOpen, blocked, slope, keep, pass)
     slope = slope or Acoustics.slope(8, 3)
     local m = muffle()
     local at, p, via = nil, nil, nil
+    local second = nil   -- music's second way round (below), as the page takes it
     local li, si = L.int or 0, S.int or 0
     local LI, SI = interiors[li], interiors[si]
 
@@ -498,11 +500,21 @@ function Acoustics.voice(L, S, interiors, doorOpen, blocked, slope, keep, pass)
         local c = Acoustics.around(blocked.turns)
         local straight = dist(S.pos, L.pos)
         local W = Acoustics.COST.wall
-        if (blocked.len or straight) * slope + c.db <= straight * slope + W.db then
+        local level = (blocked.len or straight) * slope + c.db
+        if level <= straight * slope + W.db then
             local total = 0
             for _, t in ipairs(blocked.turns or {}) do total = total + t end
             if c.db >= 0.05 then add(m, c, ('round it, %d deg, +%.1f m'):format(math.floor(total + 0.5), blocked.d or 0)) end
             at, p = blocked.at, blocked.at and blocked.len or nil
+            -- Music's second way, through another opening (environment.lua secondWay), heard at the same time while it
+            -- is within SECOND_DB of the first: its own muffle, the corner it is heard from, its length.
+            local s2 = blocked.second
+            if type(s2) == 'table' and s2.at then
+                local c2 = Acoustics.around(s2.turns)
+                if (s2.len or straight) * slope + c2.db - level <= SECOND_DB then
+                    second = { g = -math.min(c2.db, MAX_DB), f = math.max(200, math.floor(c2.hz)), at = s2.at, p = s2.len }
+                end
+            end
         else
             add(m, W, 'wall')
         end
@@ -531,8 +543,13 @@ function Acoustics.voice(L, S, interiors, doorOpen, blocked, slope, keep, pass)
         f = m.n > 0 and math.max(200, math.floor(hz)) or OPEN_HZ,
         at = at,
         p = p,
-        via = via,     -- stays in Lua (client/main.lua copies only g, f, at, p to the page)
+        via = via,     -- stays in Lua (client/main.lua copies only g, f, at, p and the second way's to the page)
         why = #m.why > 0 and table.concat(m.why, ' + ') or 'clear',
+        -- Music's second way (outdoors, round another corner), or nil: its dB, Hz, corner and length.
+        g2 = second and second.g or nil,
+        f2 = second and second.f or nil,
+        at2 = second and second.at or nil,
+        p2 = second and second.p or nil,
     }
 end
 

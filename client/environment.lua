@@ -206,6 +206,13 @@ local SEARCH_FROM = 3.0                 -- a search going on is started again wh
 -- found, and never when it bends back on itself (SHARP): past those it is looked for again from where the listener is.
 local KEEP_MOVE = 5.0                   -- metres from where a way was found that it is still followed
 local SHARP = 120                       -- degrees of bend past which a followed way is looked for again
+-- MUSIC IS HEARD BY TWO WAYS AT ONCE (Josh, 14 Nov 2026: one way can come from one direction only, so when the best way
+-- moved to another gap the sound jumped from behind to in front). Round a real corner, music also takes the best way
+-- through ANOTHER opening (a search that keeps clear of the first way's corner), and the page plays both from their
+-- own corners, each as loud as its own length and bends make it (html/js/audio.js): walking on, one fades up as the
+-- other fades down, as real sound does. A voice in a conversation keeps one way.
+local APART = 4.0                       -- metres: the second way's corner at least this far from the first's
+local SECOND_BEND = 30                  -- degrees: a first way bending less (round a post) has no second worth one
 local rounds = {}                       -- [identity] = { way, wayTo, wayFrom, search, last, lastFrom, lastTo, settled }
 local closeRays = { left = CLOSE_RAYS }
 
@@ -262,7 +269,7 @@ local function lineOf(id, from, to, own, range, pass)
         probes[id] = false
         -- In sight: the way kept from before is done with. Out of sight again, it is looked for from there.
         local was = rounds[id]
-        if was then was.way, was.settled = nil, false end
+        if was then was.way, was.settled, was.way2, was.settled2, was.none2, was.prev = nil, false, nil, false, nil, nil end
         return false
     end
     local r = rounds[id]
@@ -294,6 +301,8 @@ local function lineOf(id, from, to, own, range, pass)
             sharp = f
         end
     end
+    -- (The way given up: music may still hear by it, through the opening it leaves: secondWay.)
+    if r.way then r.prev = { way = r.way, to = r.wayTo } end
     r.way = nil
     -- 2. Close round what the line hit.
     local w = nil
@@ -323,6 +332,82 @@ local function lineOf(id, from, to, own, range, pass)
     return answer(sharp or r.last or true, false)
 end
 
+local function bendOf(f)
+    local b = 0
+    for _, t in ipairs(f.turns or {}) do b = b + t end
+    return b
+end
+
+local function flatFar(a, b, metres)
+    local dx, dy = a[1] - b[1], a[2] - b[2]
+    return dx * dx + dy * dy > metres * metres
+end
+
+--- A music voice's SECOND way round (above: MUSIC IS HEARD BY TWO WAYS AT ONCE), given its first (lineOf's answer):
+--- the best way through another opening, kept and followed by the first's rules, or nil when there is none worth one
+--- (the first bends round no real corner, its corner is right by either end, no other way within reach).
+local function secondWay(id, from, to, own, range, pass, first)
+    local r = rounds[id]
+    if not r then return nil end
+    local c1 = first.at
+    if not c1 or bendOf(first) < SECOND_BEND then
+        r.way2, r.none2, r.last2, r.settled2 = nil, nil, nil, false
+        return nil
+    end
+    -- Nobody moved: as it was.
+    if r.settled2 and not far(r.last2From, from, STILL) and not far(r.last2To, to, STILL) then return r.last2 end
+    local function answer2(f, settled)
+        r.last2, r.last2From, r.last2To, r.settled2 = f, from, to, settled
+        return f
+    end
+    -- The second way found before: by the first's rules, and still through another opening than the first's corner.
+    if r.way2 and not far(r.way2To, to, STILL) and not far(r.way2From, from, KEEP_MOVE) then
+        local f = Ways.follow(r.way2, from, to, own, closeRays)
+        if f == nil then return answer2(r.last2, false) end            -- (no rays left this pass)
+        if f and f.at and flatFar(f.at, c1, APART) then return answer2(f, true) end
+    end
+    r.way2 = nil
+    -- THE FIRST WAY JUST MOVED TO ANOTHER OPENING: the way it gave up, through the opening it left, is the second at once,
+    -- so the sound fades from one to the other rather than jumping while a search runs.
+    local p = r.prev
+    r.prev = nil
+    if p and not far(p.to, to, STILL) then
+        local f = Ways.follow(p.way, from, to, own, closeRays)
+        if f and f.at and flatFar(f.at, c1, APART) then
+            r.way2, r.way2To, r.way2From = p.way, to, from
+            return answer2(f, true)
+        end
+    end
+    -- None lately from about here, round this same first corner: none, without looking again.
+    local n = r.none2
+    if n and not far(n.from, from, KEEP_MOVE) and not far(n.to, to, STILL) and not flatFar(n.c1, c1, APART) then
+        return answer2(nil, true)
+    end
+    -- The first corner right by the voice: no other opening is worth one. (Right by the listener, the search leaves
+    -- its corner by another way: ways.lua avoided.)
+    if not flatFar(c1, to, APART) then return answer2(nil, true) end
+    -- The search, through anywhere but the first's corner: the pass's one search, when no other voice had it.
+    local s = r.search2
+    if s and (far(s.from, from, SEARCH_FROM) or far(s.to, to, STILL) or flatFar(s.avoid[1], c1, APART)) then s = nil end
+    r.search2 = s
+    if pass.searched then return answer2(r.last2, false) end
+    pass.searched = true
+    s = s or Ways.start(from, to, own, range, { { c1[1], c1[2], APART } })
+    r.search2 = s
+    local found = Ways.step(s, pass.search, SEARCH_SQUARES)
+    if found == nil then return answer2(r.last2, false) end            -- (goes on next pass)
+    r.search2 = nil
+    if not found then
+        r.none2 = { from = from, to = to, c1 = c1 }
+        return answer2(nil, true)
+    end
+    r.way2, r.way2To, r.way2From = found, to, from
+    local f = Ways.follow(found, from, to, own, pass.search)
+    if f and f.at and flatFar(f.at, c1, APART) then return answer2(f, true) end
+    r.way2 = nil
+    return answer2(nil, true)
+end
+
 local function learn(d)
     if d.int == 0 then return end
     local I = readInterior(d.int)
@@ -334,7 +419,8 @@ end
 
 --- Everything for one pass.
 ---@param me table          { ped, head = {x,y,z} }
----@param speakers table    [identity] = { ped, head = {x,y,z}, range = metres, loud = through a megaphone } — the
+---@param speakers table    [identity] = { ped, head = {x,y,z}, range = metres, loud = through a megaphone,
+---                         mu = music (a second way round: secondWay) } — the
 ---                         voices to work out now
 ---@param heard table|nil   [identity] = anything, for every voice still heard (what is kept for the
 ---                         others: their line-of-sight check, the opening they came through). Default:
@@ -362,7 +448,12 @@ function Environment.update(me, speakers, heard)
             and (L.int == 0 or interiors[L.int]) and (S.int == 0 or interiors[S.int])
         local isBlocked = false
         if E.walls ~= false and not mapped then
-            isBlocked = lineOf(id, me.head, s.head, s.ped, s.range, (L.int == 0 and S.int == 0) and outside or indoors)
+            local open = L.int == 0 and S.int == 0
+            isBlocked = lineOf(id, me.head, s.head, s.ped, s.range, open and outside or indoors)
+            -- Music round a corner outdoors: its second way too, heard at the same time.
+            if s.mu and open and type(isBlocked) == 'table' then
+                isBlocked.second = secondWay(id, me.head, s.head, s.ped, s.range, outside, isBlocked)
+            end
         end
         local ints = {}
         if L.int ~= 0 then ints[L.int] = interiors[L.int] or nil end
