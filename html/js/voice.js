@@ -189,6 +189,7 @@
                 VoiceAudio.add(vid, source, h ? h.range : 8, on);
                 if (h && h.full) VoiceAudio.setRange(vid, h.range, h.full);   // (a world voice's own full-volume circle)
                 VoiceAudio.setFx(vid, h ? h.fx : null);
+                VoiceAudio.setSpace(vid, !!(h && h.mu));                       // (music: heard as from far off)
             },
             remove: () => VoiceAudio.remove(vid),
             live: (on) => VoiceAudio.setLive(vid, on),
@@ -481,7 +482,7 @@
             // Moved from one place to several, or back: the old kind of use goes first.
             if (was && !was.speaker && !was.places && places > 0) unwant(e.id, VOICE, 'hear');
             if (was && was.places > 0 && places === 0) for (let i = 1; i <= was.places; i++) unwant(e.id, VOICE, 'hear#' + i);
-            hear.set(e.id, { src: e.src, range: e.range, fx: e.fx || null, full: e.full || 0, places });
+            hear.set(e.id, { src: e.src, range: e.range, fx: e.fx || null, full: e.full || 0, places, mu: !!e.mu });
             if (places > 0) {
                 // Heard from several places (speakers): one use of its track per place, each a 3D chain of its own
                 // ('<identity>#<n>', where client/main.lua places it). Places it no longer has are let go of.
@@ -490,12 +491,14 @@
                     const vid = e.id + '#' + i;
                     VoiceAudio.setRange(vid, e.range, e.full);
                     VoiceAudio.setFx(vid, e.fx || null);
+                    VoiceAudio.setSpace(vid, !!e.mu);
                     want(e.id, VOICE, 'hear#' + i, hearUse(e.id, vid));
                 }
                 continue;
             }
             VoiceAudio.setRange(e.id, e.range, e.full);
             VoiceAudio.setFx(e.id, e.fx || null);      // the megaphone, a sound recipe, or none
+            VoiceAudio.setSpace(e.id, !!e.mu);         // music (a world voice made with `music`): heard as from far off
             want(e.id, VOICE, 'hear', hearUse(e.id));
         }
         for (const id of m.remove || []) {

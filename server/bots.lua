@@ -215,20 +215,22 @@ local function fxOf(w)
 end
 
 --- A world voice as a listener's game is told of it: where it comes from (`ent`, one entity's network id; or `pts`,
---- its places: { ent = netId } or { at = { x, y, z }, model }), how far it carries, how far out it is still at full
---- volume (`full`, only when set: html/js/audio.js fade), and its sound (`fx`: 'megaphone' or a recipe). nil for a bot
---- that is not one.
+--- its places: { ent = netId, off?, model? } — `off` a spot on that entity, where an object of `model` rides it — or
+--- { at = { x, y, z }, model }), how far it carries, how far out it is still at full volume (`full`, only when set:
+--- html/js/audio.js fade), its sound (`fx`: 'megaphone' or a recipe), and `mu` when it is music (heard as from far off:
+--- late by its distance, the Doppler effect, the air's treble; html/js/audio.js setSpace). nil for a bot that is not one.
 function VoiceBots.worldEntry(key)
     local b = VoiceBots.byKey[key]
     if not (b and b.world) then return nil end
     local w = b.world
-    local e = { id = b.identity, range = worldRange(w), full = w.full, fx = fxOf(w) }
-    if #w.points == 1 and w.points[1].netId then
+    local e = { id = b.identity, range = worldRange(w), full = w.full, fx = fxOf(w), mu = w.music or nil }
+    if #w.points == 1 and w.points[1].netId and not w.points[1].off then
         e.ent = w.points[1].netId
     else
         e.pts = {}
         for i, p in ipairs(w.points) do
-            e.pts[i] = p.netId and { ent = p.netId } or { at = { p.x, p.y, p.z }, model = p.model }
+            if p.netId then e.pts[i] = { ent = p.netId, off = p.off, model = p.off and p.model or nil }
+            else e.pts[i] = { at = { p.x, p.y, p.z }, model = p.model } end
         end
     end
     return e
@@ -542,7 +544,8 @@ local function reachOf(range, full)
 end
 
 local MAX_PLACES = 32   -- places one world voice comes from (a room or a stage full of speakers)
-local AT_HELP = 'at is { netId = n }, { coords = vector3, model? }, or a list of them'
+local AT_HELP = 'at is { netId = n, offset?, model? }, { coords = vector3, model? }, or a list of them'
+local MAX_OFFSET = 10.0 -- metres a place may be from the entity it rides
 
 --- A number from a vector3 or a table, by name or by place: { x, y, z } and { x = .., y = .., z = .. } both.
 local function coordOf(c, name, i)
@@ -551,8 +554,14 @@ local function coordOf(c, name, i)
     return v and v == v and math.abs(v) < 1e6 and v or nil
 end
 
---- One place as a world voice keeps it: { netId } of an entity that exists now, or { x, y, z, model } (a fixed spot,
---- with the model of the object standing there, or none). nil and why.
+local function modelOf(model)
+    if type(model) == 'string' then return model ~= '' and #model <= 64 and GetHashKey(model) or nil end
+    return math.tointeger(tonumber(model))
+end
+
+--- One place as a world voice keeps it: { netId } of an entity that exists now — with `off`, a spot on it (an offset
+--- in its own frame, where an object of `model` rides it: a speaker on a car's roof) — or { x, y, z, model } (a fixed
+--- spot, with the model of the object standing there, or none). nil and why.
 local function placeOf(p)
     if type(p) ~= 'table' or isFuncRef(p) then return nil, AT_HELP end
     local netId = rawget(p, 'netId')
@@ -561,17 +570,21 @@ local function placeOf(p)
         if not netId or netId <= 0 then return nil, AT_HELP end
         local ent = NetworkGetEntityFromNetworkId(netId)
         if ent == 0 or not DoesEntityExist(ent) then return nil, 'no entity with that netId' end
-        return { netId = netId }
+        local o = rawget(p, 'offset')
+        if o == nil then return { netId = netId } end
+        if not (type(o) == 'vector3' or (type(o) == 'table' and not isFuncRef(o))) then return nil, 'offset is a vector3' end
+        local ox, oy, oz = coordOf(o, 'x', 1), coordOf(o, 'y', 2), coordOf(o, 'z', 3)
+        if not (ox and oy and oz) or math.sqrt(ox * ox + oy * oy + oz * oz) > MAX_OFFSET then
+            return nil, ('offset is a vector3 within %d m of the entity'):format(MAX_OFFSET)
+        end
+        return { netId = netId, off = { ox + 0.0, oy + 0.0, oz + 0.0 }, model = modelOf(rawget(p, 'model')) }
     end
     local c = rawget(p, 'coords')
     local isVec = type(c) == 'vector3' or type(c) == 'vector4'
     if not (isVec or (type(c) == 'table' and not isFuncRef(c))) then return nil, AT_HELP end
     local x, y, z = coordOf(c, 'x', 1), coordOf(c, 'y', 2), coordOf(c, 'z', 3)
     if not (x and y and z) then return nil, 'coords is a vector3 (x, y, z)' end
-    local model = rawget(p, 'model')
-    if type(model) == 'string' then model = model ~= '' and #model <= 64 and GetHashKey(model) or nil
-    else model = math.tointeger(tonumber(model)) end
-    return { x = x + 0.0, y = y + 0.0, z = z + 0.0, model = model }
+    return { x = x + 0.0, y = y + 0.0, z = z + 0.0, model = modelOf(rawget(p, 'model')) }
 end
 
 --- `at` as a world voice takes it: one place, or a list of up to MAX_PLACES. A list of its places, or nil and why.
@@ -603,13 +616,43 @@ local function worldAt(at, range, full, bucket)
     return { points = points, range = range, full = full, bucket = math.tointeger(tonumber(bucket)) or 0 }
 end
 
+--- A world voice for `owner`: { name, at, range, bucket, music }. Its key, or nil and why. The CreateWorldVoice export,
+--- and whip_voice's own speakers (server/speakers.lua), which may not call its exports.
+function VoiceBots.createWorld(owner, spec)
+    local world, w = worldAt(rawget(spec, 'at'), rawget(spec, 'range'), nil, rawget(spec, 'bucket'))
+    if not world then return nil, w end
+    world.music = rawget(spec, 'music') == true or nil
+    return VoiceBots.create(owner, { name = rawget(spec, 'name'), world = world })
+end
+
+--- The same rules as the exports below, for whip_voice's own world voices (server/speakers.lua).
+function VoiceBots.setWorldRange(key, range, full)
+    local b = VoiceBots.byKey[key]
+    if not (b and b.world) then return false, 'no such world voice' end
+    b.world.range, b.world.full = reachOf(range, full)
+    if Hearing and Hearing.rangeChanged then Hearing.rangeChanged(key) end
+    return true
+end
+
+function VoiceBots.setWorldSound(key, recipe)
+    local b = VoiceBots.byKey[key]
+    if not (b and b.world) then return false, 'no such world voice' end
+    if recipe == false or recipe == nil then
+        b.world.sound = nil
+    else
+        local r, why = Lines.checkRecipe(recipe)
+        if not r then return false, why end
+        b.world.sound = #r > 0 and r or nil
+    end
+    if Hearing then Hearing.rangeChanged(key) end
+    return true
+end
+
 exports('CreateWorldVoice', function(spec)
     local owner = GetInvokingResource()
     if not owner or owner == RESOURCE then return false, 'call it from another resource' end
-    if type(spec) ~= 'table' or isFuncRef(spec) then return false, 'a world voice is { name, at, range, bucket }' end
-    local world, w = worldAt(rawget(spec, 'at'), rawget(spec, 'range'), nil, rawget(spec, 'bucket'))
-    if not world then return false, w end
-    local key, d = VoiceBots.create(owner, { name = rawget(spec, 'name'), world = world })
+    if type(spec) ~= 'table' or isFuncRef(spec) then return false, 'a world voice is { name, at, range, bucket, music }' end
+    local key, d = VoiceBots.createWorld(owner, spec)
     if not key then return false, d end
     return key
 end)
@@ -644,16 +687,8 @@ exports('SetWorldVoiceSound', function(key, recipe)
     local b, w = mine(owner, key)
     if not b then return false, w end
     if not b.world then return false, 'that voice bot is on a line, not in the world' end
-    if recipe == false or recipe == nil then
-        b.world.sound = nil
-    else
-        local r, why = Lines.checkRecipe(recipe)
-        if not r then return false, why end
-        b.world.sound = #r > 0 and r or nil
-    end
-    -- Everyone hearing it hears the new sound at once.
-    if Hearing then Hearing.rangeChanged(key) end
-    return true
+    -- (Everyone hearing it hears the new sound at once.)
+    return VoiceBots.setWorldSound(key, recipe)
 end)
 
 exports('MoveWorldVoice', function(key, at)
@@ -674,10 +709,8 @@ exports('SetWorldVoiceRange', function(key, range, full)
     if not b then return false, w end
     if not b.world then return false, 'that voice bot is on a line, not in the world' end
     if tonumber(range) == nil then return false, 'range is a number of metres' end
-    b.world.range, b.world.full = reachOf(range, full)
     -- (Those hearing it now: the new edge at once. Those it now reaches: the next pass connects them.)
-    if Hearing and Hearing.rangeChanged then Hearing.rangeChanged(key) end
-    return true
+    return VoiceBots.setWorldRange(key, range, full)
 end)
 
 exports('SetWorldVoiceMegaphone', function(key, on)

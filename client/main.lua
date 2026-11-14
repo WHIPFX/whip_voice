@@ -503,7 +503,8 @@ RegisterNetEvent('whip_voice:client:hear', function(msg)
             local list = {}
             for i, p in ipairs(e.pts) do
                 local pid = e.id .. '#' .. i
-                heard[pid] = p.ent and { ent = p.ent } or { at = p.at, model = p.model }
+                heard[pid] = p.ent and { ent = p.ent, off = p.off, model = p.off and p.model or nil }
+                    or { at = p.at, model = p.model }
                 heardRange[pid], heardFx[pid] = e.range, e.fx
                 list[i] = pid
             end
@@ -606,6 +607,20 @@ local function middleOf(ent)
     return GetOffsetFromEntityInWorldCoords(ent, (lo.x + hi.x) / 2, (lo.y + hi.y) / 2, (lo.z + hi.z) / 2)
 end
 
+--- A place riding an entity (`off`: a spot on it, where an object of `model` rides it — a speaker on a car's roof):
+--- that spot in the world now, and the object there (this game's own copy, attached), or nil. The object is kept
+--- while it is still there and still on the spot, and looked for again when it is not.
+local function ridingAt(ent, src)
+    local o = src.off
+    local spot = GetOffsetFromEntityInWorldCoords(ent, o[1] + 0.0, o[2] + 0.0, o[3] + 0.0)
+    if not src.model then return spot, nil end
+    local obj = src.obj
+    if obj and DoesEntityExist(obj) and #(GetEntityCoords(obj) - spot) < 1.5 then return spot, obj end
+    obj = GetClosestObjectOfType(spot.x, spot.y, spot.z, 1.5, src.model, false, false, false)
+    src.obj = obj ~= 0 and obj or nil
+    return spot, src.obj
+end
+
 --- The ped a heard player's voice comes from, or nil when this game has not got them (out of scope). A world
 --- voice's ({ ent = netId }): that entity, while this game has it. A fixed spot's ({ at, model }): the object there.
 local function pedFor(src)
@@ -646,14 +661,23 @@ startPose = function()
                     -- Every head on the quarter-second beat; between, only the live and the talking.
                     if all or live[id] or talkers[id] then
                         local ped = pedFor(src)
-                        pedOf[id] = ped
                         local spot = type(src) == 'table' and src.at or nil
+                        -- A place riding an entity: its spot on it, and the object riding there (the object is
+                        -- what the sound comes out of, and what is in the way of nothing: environment.lua's own).
+                        local ride, rider = nil, nil
+                        if ped and type(src) == 'table' and src.off then
+                            ride, rider = ridingAt(ped, src)
+                            if rider then ped = rider end
+                        end
+                        pedOf[id] = ped
                         if ped or spot then
                             -- (A world voice may come from something that is not a ped: its middle, a little up; a
-                            -- fixed spot's object, the middle of it; a fixed spot with no object here, the spot.)
+                            -- fixed spot's object, the middle of it; a fixed spot with no object here, the spot; a
+                            -- spot on an entity, the object riding there or the spot.)
                             local h
                             if not ped then h = vector3(spot[1] + 0.0, spot[2] + 0.0, spot[3] + 0.0)
                             elseif IsEntityAPed(ped) then h = GetPedBoneCoords(ped, HEAD_BONE, 0.0, 0.0, 0.0)
+                            elseif ride then h = rider and middleOf(rider) or ride
                             elseif spot then h = middleOf(ped)
                             else h = GetOffsetFromEntityInWorldCoords(ped, 0.0, 0.0, 0.5) end
                             where[id] = { h.x, h.y, h.z }
