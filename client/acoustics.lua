@@ -43,6 +43,12 @@ local SECOND_DB = 20       -- music's second way round is heard while it is with
 local STACK = 0.8          -- each extra obstacle lowers the cutoff a little further
 local STICKY = 1.5         -- dB head start for the opening a voice already comes through
 local ALONE = 0.02         -- outdoors, a way round or the wall with less than this share of the sound: not heard by it
+-- FAR OFF, HEARD FROM NEARER ITS OWN WAY. Round a corner the sound comes from the corner, and close by that is right (a
+-- speaker up an alley is heard from the alley's mouth). Far off many ways bring it, and a sound heard from a corner well
+-- away from where the speaker plainly is sounds wrong (Josh, 14 Nov 2026): from LEAN_FROM metres on, where it is heard
+-- from is turned towards the speaker itself, up to LEAN_MOST of the way from LEAN_FULL. A corner right behind the
+-- listener, the speaker ahead, is not turned (either way round would do, and it would flick between them).
+local LEAN_FROM, LEAN_FULL, LEAN_MOST = 20, 80, 0.5
 
 -- ---- Rotations: interiors store rooms and doorways relative to themselves ---------------------------
 
@@ -452,6 +458,23 @@ function Acoustics.between(L, a, b, share)
     return { L[1] + ra * x / n, L[2] + ra * y / n, a[3] }
 end
 
+--- Where a way round is heard from, `at` (its corner), turned towards the speaker by how far off they are (LEAN_FROM).
+function Acoustics.lean(L, at, S)
+    if not at then return at end
+    local sx, sy = S[1] - L[1], S[2] - L[2]
+    local straight = math.sqrt(sx * sx + sy * sy)
+    if straight <= LEAN_FROM then return at end
+    local ax, ay = at[1] - L[1], at[2] - L[2]
+    local r = math.sqrt(ax * ax + ay * ay)
+    if r < 0.01 then return at end
+    local a1 = math.atan(ay, ax)
+    local turn = ((math.atan(sy, sx) - a1 + math.pi) % (2 * math.pi)) - math.pi
+    local w = LEAN_MOST * math.min(1, (straight - LEAN_FROM) / (LEAN_FULL - LEAN_FROM))
+    w = w * math.min(1, (math.pi - math.abs(turn)) / (math.pi / 4))       -- (none for a corner right behind)
+    local a = a1 + turn * w
+    return { L[1] + r * math.cos(a), L[2] + r * math.sin(a), at[3] }
+end
+
 --- How one speaker sounds to one listener.
 ---@param L table   { int, room, pos = {x,y,z}, veh, cabin (closed car), water }
 ---@param S table   the same, for the speaker, and `loud` while they speak through a megaphone
@@ -541,7 +564,7 @@ function Acoustics.voice(L, S, interiors, doorOpen, blocked, slope, keep, pass)
             end
             if blocked.at then
                 at = whole and blocked.at or Acoustics.between(L.pos, blocked.at, S.pos, share)
-                p = path
+                at, p = Acoustics.lean(L.pos, at, S.pos), path
             end
         end
         -- Music's second way, through another opening (environment.lua secondWay), heard at the same time while it is
@@ -550,7 +573,7 @@ function Acoustics.voice(L, S, interiors, doorOpen, blocked, slope, keep, pass)
         if type(s2) == 'table' and s2.at then
             local c2 = Acoustics.around(s2.turns)
             if (s2.len or straight) * slope + c2.db - level <= SECOND_DB then
-                second = { db = c2.db, hz = c2.hz, at = s2.at, p = s2.len }
+                second = { db = c2.db, hz = c2.hz, at = Acoustics.lean(L.pos, s2.at, S.pos), p = s2.len }
             end
         end
     elseif blocked then
