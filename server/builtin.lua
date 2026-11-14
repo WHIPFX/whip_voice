@@ -28,6 +28,7 @@ VoiceBuiltin.URL = 'wss://whip-voice.invalid'
 
 local readyFns = {}
 local lastGen = 0
+local lastBotGen = 0
 local firewallWaiters = {}
 local lastFirewallN = 0
 
@@ -40,6 +41,13 @@ AddEventHandler('whip_voice:builtin:state', function(s)
         lastGen = gen
         for _, fn in ipairs(readyFns) do fn() end
     end
+    -- The voice bot started again by itself (it stopped): it has none of its calls any more, so the bots here go, and
+    -- their owners are told ('failed'). Its first start had none to lose.
+    local botGen = tonumber(s.bot.gen) or 0
+    if botGen > 0 and botGen ~= lastBotGen then
+        if lastBotGen > 0 and VoiceBots then VoiceBots.removeAll('failed') end
+        lastBotGen = botGen
+    end
     local fwN = tonumber(s.firewallN) or 0
     if fwN ~= lastFirewallN then
         lastFirewallN = fwN
@@ -49,8 +57,8 @@ AddEventHandler('whip_voice:builtin:state', function(s)
     end
 end)
 
---- Windows Firewall read afresh (service/firewall.ps1, through server/builtin.js; opened if this server may):
---- done(firewall) with { on, open, blocked, ... }, or done(nil) on Linux or when it could not be read.
+--- Windows Firewall read afresh, never changed (service/firewall.ps1, through server/builtin.js): done(firewall)
+--- with { on, open, blocked, ... }, or done(nil) on Linux or when it could not be read.
 ---@param done fun(firewall: table|nil)
 function VoiceBuiltin.checkFirewall(done)
     firewallWaiters[#firewallWaiters + 1] = done
@@ -122,9 +130,10 @@ function VoiceBuiltin.register(core)
             {'sock', 'id', 1, 2147483647},
             {'op', 'enum', { 'open', 'more', 'data', 'close' }},
             {'data', 'string', CHUNK, ''},
+            {'seq', 'id', 1, 2147483647},      -- each piece one up from the last on its connection: none may be lost
         },
-    }, function(source, _, sock, op, data)
-        TriggerEvent('whip_voice:relay:fromGame', source, sock, op, data)
+    }, function(source, _, sock, op, data, seq)
+        TriggerEvent('whip_voice:relay:fromGame', source, sock, op, data, seq)
     end)
 
     -- The voice bot's settings (config.lua) go with the start: server/builtin.js writes them into the bot's config.

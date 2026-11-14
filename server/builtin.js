@@ -344,10 +344,13 @@ class Kept {
         setTimeout(() => this.start(), wait * 1000);
     }
 
-    /** The most telling line it printed: a FATAL or ERROR line, else its last. */
+    /** The most telling line it printed: its last error, else its last line worth reading. Never LiveKit's DEBUG or
+     *  INFO lines, a stack trace's, or the voice bot SDK's JSON log lines ('participant closing' is no reason). */
     reason() {
-        const bad = this.tail.filter((l) => /\b(FATAL|ERROR|error|Error)\b/.test(l) && !NOISE.test(l));
-        const l = (bad.length ? bad[bad.length - 1] : this.tail[this.tail.length - 1]) || '';
+        const useful = this.tail.filter((l) => !NOISE.test(l) && !/^\s/.test(l) && !l.trim().startsWith('{')
+            && !/^\S+\t(DEBUG|INFO)\t/.test(l));
+        const bad = useful.filter((l) => /\b(FATAL|ERROR|error|Error)\b/.test(l));
+        const l = (bad.length ? bad[bad.length - 1] : useful[useful.length - 1]) || '';
         return l.replace(/^\S+\t\S+\t\S+\t\S+\t/, '').trim().slice(0, 300);
     }
 
@@ -501,13 +504,13 @@ async function startLiveKit(s) {
 // Windows Firewall (service/firewall.ps1, also behind "Open voice ports.bat")
 // ============================================
 
-/** Read Windows Firewall, and open the voice ports if this FiveM server runs as administrator. `quiet`: only read
- *  (for /voicecheck, which says it in its own words). */
+/** Read Windows Firewall, and open the voice ports if this FiveM server runs as administrator. `quiet`: only read,
+ *  never change it (for /voicecheck, which says it in its own words: a check changes nothing). */
 async function checkFirewall(s, quiet) {
     if (!WIN) return;
     const r = await run(path.join(SYSTEM32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'), [
         '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(HERE, 'service', 'firewall.ps1'),
-        '-Exe', LK_EXE, '-Udp', s.udp, '-Tcp', String(s.tcp), '-Fix', '-Json',
+        '-Exe', LK_EXE, '-Udp', s.udp, '-Tcp', String(s.tcp), ...(quiet ? [] : ['-Fix']), '-Json',
     ]);
     let f = null;
     try { f = JSON.parse(r.out.trim().split(/\r?\n/).pop()); } catch (_) { /* below */ }
@@ -537,6 +540,7 @@ async function checkFirewall(s, quiet) {
 // ============================================
 
 let bot = null;
+let botGen = 0;   // +1 each time the voice bot (re)starts and answers: one that started again has none of its calls
 
 async function ensureNode() {
     if (readText(path.join(NODE_DIR, 'version.txt')) === NODE_VERSION && exists(NODE_EXE)) return;
@@ -648,8 +652,9 @@ async function startBot(s, opts) {
         },
         onReady: () => {
             const first = state.bot.phase !== 'restarting';
-            setBot('ready', null, { url, token });
-            if (first) say('voice bot: running (lore characters can phone players)');
+            botGen += 1;
+            setBot('ready', null, { url, token, gen: botGen });
+            say(first ? 'voice bot: running (lore characters can phone players)' : 'voice bot: running again');
         },
         onDown: (why) => { setBot('restarting', why); say(`voice bot: ${why}`); },
         onGiveUp: (why) => {
@@ -715,7 +720,8 @@ on('onResourceStop', (name) => {
 // ============================================
 //
 // A player's game opens a "connection" (op open, with the path and query its LiveKit client asked for), sends
-// messages (base64, cut into pieces: op more, more, ..., data), and closes it (op close). Each is passed to a real
+// messages (base64, cut into pieces: op more, more, ..., data), and closes it (op close). Each piece is numbered, one
+// up from the last on its connection. LiveKit's signalling is binary (protobuf): a text frame is carried as its bytes. Each is passed to a real
 // WebSocket to LiveKit on this machine, and LiveKit's messages go back as more/data, and its close as close. LiveKit
 // itself checks each connection's token (signed by server/token.lua for that player), so nothing here can let a game
 // into the room that its token does not.
@@ -748,7 +754,7 @@ function forget(s, code, reason) {
     if (code) closedToGame(s.src, s.sock, code, reason);
 }
 
-function open(src, sock, key, target) {
+function open(src, sock, key, target, seq) {
     if (state.phase !== 'ready') { closedToGame(src, sock, 1013, state.why || 'the voice server is starting'); return; }
     // Only LiveKit's signalling: /rtc (or /rtc/v1) and its query (the token, the client's details).
     if (!/^\/rtc(\/v1)?(\?[^#\s]*)?$/.test(target)) { closedToGame(src, sock, 1008, 'not a voice server address'); return; }
@@ -765,7 +771,7 @@ function open(src, sock, key, target) {
         return;
     }
     ws.binaryType = 'arraybuffer';
-    const s = { ws, src, sock, key, parts: [], size: 0, pending: [] };
+    const s = { ws, src, sock, key, seq, parts: [], size: 0, pending: [] };
     sockets.set(key, s);
     ws.addEventListener('open', () => {
         if (sockets.get(key) !== s) return;
@@ -785,18 +791,23 @@ function open(src, sock, key, target) {
     ws.addEventListener('error', () => { /* a close follows */ });
 }
 
-on('whip_voice:relay:fromGame', (src, sock, op, data) => {
+on('whip_voice:relay:fromGame', (src, sock, op, data, seq) => {
     src = Number(src);
     sock = Number(sock);
+    seq = Number(seq);
     data = typeof data === 'string' ? data : '';
-    if (!Number.isInteger(src) || !Number.isInteger(sock)) return;
+    if (!Number.isInteger(src) || !Number.isInteger(sock) || !Number.isInteger(seq)) return;
     const key = `${src}:${sock}`;
-    if (op === 'open') { open(src, sock, key, data); return; }
+    if (op === 'open') { open(src, sock, key, data, seq); return; }
     const s = sockets.get(key);
     if (!s) {
         if (op !== 'close') closedToGame(src, sock, 1006, 'that voice connection is gone');
         return;
     }
+    // EVERY PIECE IN TURN. One that never came (refused by the rate limit, or lost between the page and the game)
+    // would make the next message garbage: the connection closes instead, and the voice client reconnects.
+    if (seq !== s.seq + 1) { forget(s, 1011, 'a piece of its signalling was lost'); return; }
+    s.seq = seq;
     if (op === 'close') { forget(s, 1000, ''); return; }
     s.parts.push(data);
     s.size += data.length;

@@ -29,8 +29,9 @@ $ErrorActionPreference = 'Stop'
 if (-not $Exe) { $Exe = Join-Path $PSScriptRoot '..\bin\livekit\livekit-server.exe' }
 $Exe = [IO.Path]::GetFullPath($Exe)
 
-$RuleUdp = 'ALLOW whip_voice built-in voice server (UDP)'
-$RuleTcp = 'ALLOW whip_voice built-in voice server (TCP)'
+# Named by their ports: two FiveM servers on one machine (other ports for the second, docs/SETUP.md) each keep their own.
+$RuleUdp = "ALLOW whip_voice built-in voice server (UDP $Udp)"
+$RuleTcp = "ALLOW whip_voice built-in voice server (TCP $Tcp)"
 
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)

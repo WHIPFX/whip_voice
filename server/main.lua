@@ -20,6 +20,9 @@ local function openRoom()
         if not ok then return end
         local id = Voice.randomId()
         Voice.room = 'whipvoice-' .. (id and id:sub(1, 8) or tostring(os.time()))
+        -- Voice bots in the room before (the voice server started again by itself) are in a room that is gone: they
+        -- go, and their owners are told ('failed').
+        if VoiceBots then VoiceBots.removeAll('failed') end
         VoiceServer.call('ListRooms', nil, function(listed, reply)
             if not listed or type(reply.rooms) ~= 'table' then return end
             for _, r in ipairs(reply.rooms) do
