@@ -61,6 +61,9 @@ files {
     'html/js/voice.js',
     'html/js/walkie.js',
     'html/js/vendor/livekit-client.umd.js',
+    -- Its licence and notices go wherever it goes (Apache 2.0, and the MIT and BSD parts built into it).
+    'html/js/vendor/livekit-client.LICENSE.txt',
+    'html/js/vendor/livekit-client.NOTICE.txt',
     -- The 3D radio (3D Clanker's module) and three.js r170, which draws it.
     'html/radio3d/radio.js',
     'html/radio3d/lcd.js',
