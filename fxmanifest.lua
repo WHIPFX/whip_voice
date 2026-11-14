@@ -69,6 +69,7 @@ files {
     'html/radio3d/lcd.js',
     'html/radio3d/radio.glb',
     'html/radio3d/lib/build/three.module.min.js',
+    'html/radio3d/lib/LICENSE',     -- three.js's MIT licence: the files from its examples folder carry no header
     'html/radio3d/lib/examples/jsm/controls/OrbitControls.js',
     'html/radio3d/lib/examples/jsm/environments/RoomEnvironment.js',
     'html/radio3d/lib/examples/jsm/loaders/GLTFLoader.js',
