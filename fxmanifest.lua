@@ -4,7 +4,7 @@ game 'gta5'
 name 'whip_voice'
 author 'Whippy'
 description 'Voice chat on a voice server of its own: voices placed in 3D, and voice effects'
-version '0.1.0'
+version '0.2.0'
 
 -- HOW IT WORKS: each player's game sends their microphone to a voice server (LiveKit), which passes it on to
 -- the players near them. This FiveM server never carries audio; it decides who may hear whom. The voice server
