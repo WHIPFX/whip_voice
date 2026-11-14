@@ -42,6 +42,7 @@ local MAX_DB = 45          -- beyond this, it is silent anyway
 local SECOND_DB = 20       -- music's second way round is heard while it is within this of the first (else too faint)
 local STACK = 0.8          -- each extra obstacle lowers the cutoff a little further
 local STICKY = 1.5         -- dB head start for the opening a voice already comes through
+local ALONE = 0.02         -- outdoors, a way round or the wall with less than this share of the sound: not heard by it
 
 -- ---- Rotations: interiors store rooms and doorways relative to themselves ---------------------------
 
@@ -435,6 +436,22 @@ function Acoustics.around(turns)
     }
 end
 
+--- Heard from between two places `a` and `b` (seen from the listener L), by `share` of the sound coming from `a`: a
+--- point as far off as `a`, its direction between theirs. The louder is heard far more than its share (a sound coming
+--- two ways is heard from the louder's side: their shares squared), so a fifth of it through a wall turns it a little,
+--- not a fifth of the way to the speaker standing far beyond the corner.
+function Acoustics.between(L, a, b, share)
+    local ax, ay = a[1] - L[1], a[2] - L[2]
+    local bx, by = b[1] - L[1], b[2] - L[2]
+    local ra, rb = math.sqrt(ax * ax + ay * ay), math.sqrt(bx * bx + by * by)
+    if ra < 0.01 or rb < 0.01 then return a end
+    local wa, wb = share * share, (1 - share) * (1 - share)
+    local x, y = wa * ax / ra + wb * bx / rb, wa * ay / ra + wb * by / rb
+    if x * x + y * y < 1e-6 then return a end
+    local n = math.sqrt(x * x + y * y)
+    return { L[1] + ra * x / n, L[2] + ra * y / n, a[3] }
+end
+
 --- How one speaker sounds to one listener.
 ---@param L table   { int, room, pos = {x,y,z}, veh, cabin (closed car), water }
 ---@param S table   the same, for the speaker, and `loud` while they speak through a megaphone
@@ -495,28 +512,46 @@ function Acoustics.voice(L, S, interiors, doorOpen, blocked, slope, keep, pass)
     elseif type(blocked) == 'table' then
         -- Both outside, something between the two heads with a way round it (client/environment.lua): its bends
         -- (`turns`, degrees) and `d` metres more than the straight line; a way further round also its length and the
-        -- bend it is heard from. The louder of that way and straight through the wall wins (each metre further costs
-        -- the voice's own fade, `slope`), so a long way round fades into the wall's muffle rather than jumping to it.
+        -- bend it is heard from. BOTH ARE HEARD, the way round and straight through the wall, adding up by their power
+        -- (each metre further costs the voice's own fade, `slope`). The louder alone used to win, and where one took
+        -- over from the other the sound leapt from the corner to straight through and its treble from the corner's to
+        -- the wall's, flicking back and forth over a few steps (the voice simulator, 14 Nov 2026). Now it is heard from
+        -- between the two by their shares (Acoustics.between), as loud as both together, its treble between theirs.
         local c = Acoustics.around(blocked.turns)
         local straight = dist(S.pos, L.pos)
         local W = Acoustics.COST.wall
-        local level = (blocked.len or straight) * slope + c.db
-        if level <= straight * slope + W.db then
+        local len = blocked.len or straight
+        local roundDb, wallDb = len * slope + c.db, straight * slope + W.db      -- below the voice at its own head
+        local share = 1 / (1 + 10 ^ ((roundDb - wallDb) / 10))                    -- the way round's part of the power
+        local level = -10 * math.log(10 ^ (-roundDb / 10) + 10 ^ (-wallDb / 10), 10)
+        if share <= ALONE then
+            add(m, W, 'wall')
+        else
+            local whole = share >= 1 - ALONE
+            local path = whole and len or straight + (len - straight) * share
             local total = 0
             for _, t in ipairs(blocked.turns or {}) do total = total + t end
-            if c.db >= 0.05 then add(m, c, ('round it, %d deg, +%.1f m'):format(math.floor(total + 0.5), blocked.d or 0)) end
-            at, p = blocked.at, blocked.at and blocked.len or nil
-            -- Music's second way, through another opening (environment.lua secondWay), heard at the same time while it
-            -- is within SECOND_DB of the first: its own muffle, the corner it is heard from, its length.
-            local s2 = blocked.second
-            if type(s2) == 'table' and s2.at then
-                local c2 = Acoustics.around(s2.turns)
-                if (s2.len or straight) * slope + c2.db - level <= SECOND_DB then
-                    second = { g = -math.min(c2.db, MAX_DB), f = math.max(200, math.floor(c2.hz)), at = s2.at, p = s2.len }
-                end
+            local why = ('round it, %d deg, +%.1f m'):format(math.floor(total + 0.5), blocked.d or 0)
+            local db = math.max(0, level - path * slope)
+            if whole then
+                if db >= 0.05 then add(m, { db = db, hz = c.hz }, why) end
+            else
+                local hz = 2 ^ (share * math.log(c.hz, 2) + (1 - share) * math.log(W.hz, 2))
+                add(m, { db = db, hz = hz }, why .. (', wall %d%%'):format(math.floor((1 - share) * 100 + 0.5)))
             end
-        else
-            add(m, W, 'wall')
+            if blocked.at then
+                at = whole and blocked.at or Acoustics.between(L.pos, blocked.at, S.pos, share)
+                p = path
+            end
+        end
+        -- Music's second way, through another opening (environment.lua secondWay), heard at the same time while it is
+        -- within SECOND_DB of the first (however the first is heard): its own muffle, its corner, its length.
+        local s2 = blocked.second
+        if type(s2) == 'table' and s2.at then
+            local c2 = Acoustics.around(s2.turns)
+            if (s2.len or straight) * slope + c2.db - level <= SECOND_DB then
+                second = { db = c2.db, hz = c2.hz, at = s2.at, p = s2.len }
+            end
         end
     elseif blocked then
         -- Both outside, something solid between the two heads, no way round.
@@ -524,17 +559,28 @@ function Acoustics.voice(L, S, interiors, doorOpen, blocked, slope, keep, pass)
     end
     if at and not p then p = dist(S.pos, at) + dist(at, L.pos) end
 
+    -- Cars and water muffle every way the sound comes by (music's second too: `also`).
+    local also = muffle()
+    local function both(cost, why) add(m, cost, why); add(also, cost) end
+
     -- Cars: muffled between inside and outside a closed car; clear inside the same car. A megaphone much less.
     if not (L.veh and L.veh ~= 0 and L.veh == S.veh) then
         local closed = (L.cabin and 1 or 0) + (S.cabin and 1 or 0)
         local C = Acoustics.COST
-        if closed == 1 then add(m, S.loud and C.carLoud or C.car, S.loud and 'car (megaphone)' or 'car')
-        elseif closed == 2 then add(m, S.loud and C.carsLoud or C.cars, S.loud and 'two cars (megaphone)' or 'two cars') end
+        if closed == 1 then both(S.loud and C.carLoud or C.car, S.loud and 'car (megaphone)' or 'car')
+        elseif closed == 2 then both(S.loud and C.carsLoud or C.cars, S.loud and 'two cars (megaphone)' or 'two cars') end
     end
 
     -- Water.
-    if L.water then add(m, Acoustics.COST.underwaterListener, 'you are underwater')
-    elseif S.water then add(m, Acoustics.COST.underwaterSpeaker, 'they are underwater') end
+    if L.water then both(Acoustics.COST.underwaterListener, 'you are underwater')
+    elseif S.water then both(Acoustics.COST.underwaterSpeaker, 'they are underwater') end
+
+    if second then
+        local hz2, n2 = math.min(second.hz, also.hz), 1 + also.n
+        if n2 > 1 then hz2 = hz2 * (STACK ^ (n2 - 1)) end
+        second.g = -math.min(second.db + also.db, MAX_DB)
+        second.f = math.max(200, math.floor(hz2))
+    end
 
     local hz = m.hz
     if m.n > 1 then hz = hz * (STACK ^ (m.n - 1)) end
