@@ -483,15 +483,22 @@ function Acoustics.voice(L, S, interiors, doorOpen, blocked, slope, keep, pass)
 end
 
 --- The echo of the room the listener stands in, from its size: nil outside or unknown.
+---
+--- A ROOM'S BOX IS BIGGER THAN THE ROOM: it is the map's box around everything the room holds, the space above its
+--- ceiling tiles and an entrance or a corner of corridor with it. Mission Row's lobby is 18.1 x 15.3 x 4.7 m by its
+--- box, 1311 m3, where its own office is 262 m3 (measured in game, 13 Nov 2026). With 'large' from 900 m3 that lobby
+--- echoed like a warehouse. So 'large' takes a box both big and tall: a warehouse, a hangar, a club, the roof far
+--- above. (A hall now sounds as a room does: html/js/audio.js.)
 ---@return string|nil preset 'small' | 'room' | 'hall' | 'large'
 function Acoustics.reverbFor(interior, room)
     if not interior or not room or room <= 0 then return nil end
     local r = interior.rooms[room]
     if not r or not r.box then return nil end
     local b = r.box
-    local vol = math.abs((b[4] - b[1]) * (b[5] - b[2]) * (b[6] - b[3]))
-    if vol < 35 then return 'small' end      -- a bathroom, a cupboard
-    if vol < 180 then return 'room' end      -- a bedroom, a kitchen
-    if vol < 900 then return 'hall' end      -- a big lounge, a shop floor
-    return 'large'                           -- a warehouse, a garage, a hangar
+    local height = math.abs(b[6] - b[3])
+    local vol = math.abs((b[4] - b[1]) * (b[5] - b[2])) * height
+    if vol < 35 then return 'small' end                      -- a bathroom, a cupboard
+    if vol < 300 then return 'room' end                      -- a bedroom, a kitchen, an office
+    if vol >= 3000 and height > 6 then return 'large' end    -- a warehouse, a hangar, a club
+    return 'hall'                                            -- a big lounge, a lobby, a shop floor
 end
