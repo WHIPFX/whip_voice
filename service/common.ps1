@@ -305,7 +305,7 @@ function Read-ServerCfgVoice([string]$path, [string[]]$categories = @()) {
     return $out
 }
 
-#--- The [folders] between "resources" and whip_voice ("[whip]" in a release): `ensure [whip]` starts whip_voice too.
+#--- The [folders] between "resources" and whip_voice (a server made by WHIP's recipe has none): the `ensure` of one starts it too.
 function Get-VoiceCategories([string]$from) {
     $names = @()
     $d = Get-Item -LiteralPath $from -ErrorAction SilentlyContinue
@@ -333,7 +333,7 @@ function Find-ServerCfg([string]$from) {
 }
 
 #--- Put whip_voice's lines into server.cfg: the old url/key/secret lines out, the new ones in, and an sv_mumble line
-#--- turned off. They go before whatever starts whip_voice (`ensure whip_voice`, or the `ensure [whip]` folder), so
+#--- turned off. They go before whatever starts whip_voice (`ensure whip_voice`, or the `ensure` of a folder it is in), so
 #--- it has them when it starts; with neither, after `ensure whip_core` (else at the end) with `ensure whip_voice`.
 #--- With a voice bot token, its line too (without one, a voice bot line already there is left as it is). A backup is
 #--- kept beside it. $categories: the [folders] whip_voice sits in (Get-VoiceCategories). Answers { Backup, Notes }.
@@ -373,7 +373,7 @@ function Update-ServerCfg([string]$path, [string]$url, [string]$key, [string]$se
             $lines.Add($l)
             continue
         }
-        # A folder whip_voice sits in ("ensure [whip]") starts it too.
+        # A folder whip_voice sits in (its folder's `ensure`) starts it too.
         foreach ($c in $categories) {
             if ($insertAt -lt 0 -and $t -match ('^(ensure|start)\s+' + [regex]::Escape($c) + $script:EndOfName)) { $insertAt = $lines.Count }
         }
