@@ -158,7 +158,8 @@ Each returns `false, reason` on failure. `onDone(key, reason)` receives `'done'`
 `'failed'`.
 
 `at` is one place or a list of up to 32. A list is one sound heard from every place at once, in step: a room full of
-speakers. Each player hears each place by their own distance to it.
+speakers. Each player hears each place by their own distance to it, and the places add up as real speakers do, by
+their power: two alike are 3 dB louder than one, not twice as loud, and next to one of them you hear mostly that one.
 
 | A place | Comes from |
 |---|---|
