@@ -29,16 +29,18 @@
         queue = [];
         fetch('https://' + RES + '/sig', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }),
-        }).catch(() => {}).finally(() => { sending = false; flush(); });
+        }).catch(() => {
+            // The game never took them (its script restarting): their connections cannot go on with a gap in them.
+            for (const it of items) { const s = sockets.get(it[0]); if (s) s._ended(1006, 'the voice relay lost a message', false); }
+        }).finally(() => { sending = false; flush(); });
     }
-    const out = (sock, op, data) => { queue.push([sock, op, data || '']); flush(); };
 
     // ---- base64 -------------------------------------------------------------------------------------------------
     function bytesOf(d) {
         if (d instanceof ArrayBuffer) return new Uint8Array(d);
         if (ArrayBuffer.isView(d)) return new Uint8Array(d.buffer, d.byteOffset, d.byteLength);
         if (typeof d === 'string') return new TextEncoder().encode(d);
-        throw new TypeError('the voice relay sends bytes or text only');
+        throw new TypeError('the voice relay sends bytes or text only');   // (text as its bytes: LiveKit's is binary)
     }
     function toB64(u8) {
         let s = '';
@@ -67,11 +69,17 @@
             this.bufferedAmount = 0;
             this.onopen = null; this.onmessage = null; this.onerror = null; this.onclose = null;
             this._sock = nextSock++;
+            this._seq = 0;             // each piece to the server one up from the last: it notices one gone missing
             this._parts = [];
             sockets.set(this._sock, this);
             const u = new URL(url);
-            out(this._sock, 'open', u.pathname + u.search);
+            this._out('open', u.pathname + u.search);
             this._timer = setTimeout(() => this._ended(1006, 'the voice server did not answer', false), OPEN_TIMEOUT_MS);
+        }
+
+        _out(op, data) {
+            queue.push([this._sock, op, data || '', ++this._seq]);
+            flush();
         }
 
         _fire(ev) {
@@ -84,15 +92,15 @@
             if (this.readyState === 0) throw new DOMException('Still in CONNECTING state.', 'InvalidStateError');
             if (this.readyState !== 1) return;      // closing or closed: dropped, as a browser's would be
             const b64 = toB64(bytesOf(data));
-            if (b64.length === 0) { out(this._sock, 'data', ''); return; }
-            for (let i = 0; i < b64.length; i += CHUNK) out(this._sock, i + CHUNK >= b64.length ? 'data' : 'more', b64.slice(i, i + CHUNK));
+            if (b64.length === 0) { this._out('data', ''); return; }
+            for (let i = 0; i < b64.length; i += CHUNK) this._out(i + CHUNK >= b64.length ? 'data' : 'more', b64.slice(i, i + CHUNK));
         }
 
         close(code, reason) {
             if (this.readyState >= 2) return;
             const wasOpen = this.readyState === 1;
             this.readyState = 2;
-            out(this._sock, 'close', '');
+            this._out('close', '');
             clearTimeout(this._timer);
             // The server answers with its own close; if it never does, closed anyway.
             this._timer = setTimeout(() => this._ended(code || 1000, reason || '', wasOpen), CLOSE_TIMEOUT_MS);

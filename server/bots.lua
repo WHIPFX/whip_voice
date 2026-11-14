@@ -114,19 +114,24 @@ end
 
 --- The bots on lines, as the line pass reads talkers: never a listener. A call's bot is nowhere (no distance, no world
 --- rule); a world voice on a radio frequency talks from its entity (`placed`), so the radio breaks up with distance
---- and only its own world hears it, as for a player.
+--- and only its own world hears it, as for a player. One whose entity is not there (despawned, out of the server's
+--- scope) is nowhere to talk from: off the air until it is back, never heard everywhere.
 function VoiceBots.talkers(players)
     local out = {}
     for i = 1, #players do out[i] = players[i] end
     for key, b in pairs(VoiceBots.byKey) do
         if b.lineId then
             local t = { src = key, bot = true, speaks = true, bucket = -1, x = 0.0, y = 0.0, z = 0.0, range = 0 }
-            local ent = b.world and b.world.netId and NetworkGetEntityFromNetworkId(b.world.netId) or 0
-            if ent ~= 0 and DoesEntityExist(ent) then
-                local c = GetEntityCoords(ent)
-                t.placed, t.bucket, t.x, t.y, t.z = true, GetEntityRoutingBucket(ent), c.x, c.y, c.z
+            if b.world then
+                local ent = b.world.netId and NetworkGetEntityFromNetworkId(b.world.netId) or 0
+                if ent ~= 0 and DoesEntityExist(ent) then
+                    local c = GetEntityCoords(ent)
+                    t.placed, t.bucket, t.x, t.y, t.z = true, GetEntityRoutingBucket(ent), c.x, c.y, c.z
+                    out[#out + 1] = t
+                end
+            else
+                out[#out + 1] = t
             end
-            out[#out + 1] = t
         end
     end
     return out
@@ -178,6 +183,13 @@ function VoiceBots.allow(key, identities, radio)
     local b = VoiceBots.byKey[key]
     if not b then return end
     send('POST', '/calls/' .. b.identity .. '/allow', { allow = identities, radio = radio or {} })
+end
+
+--- Let go of every bot (their voice room or the voice bot service is gone: they are in neither any more).
+function VoiceBots.removeAll(reason)
+    local keys = {}
+    for key in pairs(VoiceBots.byKey) do keys[#keys + 1] = key end
+    for _, key in ipairs(keys) do VoiceBots.remove(key, reason) end
 end
 
 --- Let go of a bot: off its line, out of the voice room, its owner told why.
@@ -484,6 +496,7 @@ exports('MoveWorldVoice', function(key, at)
     if not b.world then return false, 'that voice bot is on a line, not in the world' end
     local world, ww = worldAt(at, b.world.range, b.world.full)
     if not world then return false, ww end
+    world.megaphone = b.world.megaphone   -- (moving does not put a megaphone down)
     b.world = world
     return true
 end)
