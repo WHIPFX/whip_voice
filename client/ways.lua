@@ -9,9 +9,11 @@
 -- far the sound travels; how sharply it bends there decides the muffle (Acoustics.around); and that corner is where it
 -- seems to come from.
 --
--- A WAY, ONCE FOUND, IS FOLLOWED: it keeps a point beside its corner that can be seen from a good way round (its
--- anchor), and each pass the corner is found again from where the listener now stands, along the line from the anchor
--- on (Ways.follow: a few rays). So walking about, the bend changes a little at each step and so does the sound, and no
+-- A WAY, ONCE FOUND, IS FOLLOWED: it keeps its points pulled straight, from the furthest the listener saw (its anchor)
+-- to the voice, and each pass the corner is found again from where the listener now stands: on along the way to the
+-- last point they still see, then along the line from it to the next (Ways.follow: a few rays). So walking about, the
+-- bend changes a little at each step and so does the sound; walking on along the way (down the alley it comes along),
+-- the corner moves on ahead with them, to the end of the alley, rather than staying where the alley was entered; and no
 -- search is needed until the listener can no longer see the anchor.
 --
 -- A search spends rays out of a budget the caller hands it each pass, and squares out of a quota; when either runs out
@@ -19,13 +21,14 @@
 --
 --   local s = Ways.start(from, to, own, maxLen)
 --   Ways.step(s, budget, quota) -> way | false (no way within maxLen) | nil (not done yet: step it again next pass)
---   Ways.follow(way, from, to, own, budget) -> { len, at, d, turns } | false (from no longer sees the way) | nil (no rays)
+--   Ways.follow(way, from, to, own, budget) -> { len, at, d, turns, after } | false (from no longer sees the way) | nil (no rays)
+--   Ways.moved(answer, was, from, to) -> the answer from `from` instead of `was`, no rays (the same corner)
 --     from, to   {x, y, z}: the listener's head, the voice
 --     own        the voice's own object (a speaker's prop: a ray to its middle ends inside it), or nil
 --     maxLen     metres: a way longer than this cannot be heard, so it is not looked for
 --     budget     { left = rays it may spend }; what it spent is taken off
 --   len  metres the sound travels   at  {x, y, z} the corner it is heard from   d  metres more than the straight line
---   turns  degrees it bends at each corner
+--   turns  degrees it bends at each corner   after  the way's next point after its corner
 
 Ways = {}
 
@@ -43,6 +46,13 @@ local KEEP_MS = 60000       -- what a ray found is kept this long (props, gates 
 local BAND = 6.0            -- a square's ground is looked for again by a search starting this much higher or lower
 local MAX_KEPT = 20000      -- answers kept; past this they are all forgotten and found again
 local EDGE_STEPS = 6        -- halvings to find a corner (to 1/64 of the line it is on)
+-- EVERY CORNER ON THE WAY IS A BEND. A way found further round was given only two bends, the corner the listener sees
+-- and the one the voice sees, and round a block between them it lost the right angles in the middle: three corners
+-- heard as one slight bend, near clear, two streets away (the voice simulator, 14 Nov 2026). Its squares, pulled
+-- straight to within SIMPLE (no rays: their own zigzag is less), give its corners; corners nearer each other than MERGE
+-- are one (a corner cut on the slant).
+local SIMPLE = 2.5          -- metres
+local MERGE = 4.0           -- metres
 
 local probe                 -- probe(from, to, flags, ignore) -> answered, hit, pos, entity (client/environment.lua)
 function Ways.setProbe(fn) probe = fn end
@@ -138,30 +148,61 @@ local function edgeOf(eye, p, q, own, budget)
     return { p[1] + (q[1] - p[1]) * lo, p[2] + (q[2] - p[2]) * lo, p[3] + (q[3] - p[3]) * lo }
 end
 
---- Where a way goes from where the listener now stands: the corner found again along the line from its anchor on, the
---- way's length, how much longer than the straight line, its bends. false when `from` no longer sees the anchor (the
---- way is no good from here); nil when no rays are left.
----@param way table  { anchor, toward, rest = { len, after, turns } | nil } (Ways.step, or environment.lua's close look)
+--- Degrees a way turns at b, going a -> b -> c, seen from above.
+local function turnFlat(a, b, c)
+    local ux, uy, vx, vy = b[1] - a[1], b[2] - a[2], c[1] - b[1], c[2] - b[2]
+    local lu, lv = math.sqrt(ux * ux + uy * uy), math.sqrt(vx * vx + vy * vy)
+    if lu < 1e-6 or lv < 1e-6 then return 0 end
+    return math.deg(math.acos(math.max(-1, math.min(1, (ux * vx + uy * vy) / (lu * lv)))))
+end
+
+--- Where a way goes from where the listener now stands: the corner found again (on along the way while they see its
+--- next point, then along the line to the next), the way's length, how much longer than the straight line, its bends.
+--- false when `from` no longer sees the anchor (the way is no good from here); nil when no rays are left.
+---
+--- A WAY ROUND ON THE SQUARES BENDS ONLY AS SEEN FROM ABOVE. Its points are a head's height over the ground, and a
+--- speaker on the ground beside its corner made the last stretch dip steeply: a way past a van's end, heard as bending
+--- round it by 48 degrees where from above it bent by 3 (the voice simulator, 14 Nov 2026). (A way over the top of
+--- something, the close look's, bends up and over: that one is as it is.)
+---@param way table  { pts = { anchor, ..., the voice }, flat = a way on the squares } (Ways.step, or the close look)
 function Ways.follow(way, from, to, own, budget)
-    if budget.left < EDGE_STEPS + 1 then return nil end
-    local seen = sees(from, way.anchor, nil, budget)
+    local turn = way.flat and turnFlat or Acoustics.turn
+    local pts = way.pts
+    local n = #pts
+    if budget.left < EDGE_STEPS + n then return nil end
+    local seen = sees(from, pts[1], own, budget)
     if seen == nil then return nil end
     if not seen then return false end
-    local ownE = nil                   -- (the line ends inside the voice's own object only when it runs to the voice)
-    if not way.rest then ownE = own end
-    local c = edgeOf(from, way.anchor, way.toward, ownE, budget)
-    if not c then return nil end
-    local total, turns
-    if way.rest then
-        -- Bends further on: from the corner to the way's next point, then the rest as it was found.
-        total = len(from, c) + len(c, way.toward) + way.rest.len
-        turns = { Acoustics.turn(from, c, way.rest.after) }
-        for _, t in ipairs(way.rest.turns) do turns[#turns + 1] = t end
-    else
-        total = len(from, c) + len(c, to)
-        turns = { Acoustics.turn(from, c, to) }
+    local i = 1
+    while i < n - 1 do
+        local s = sees(from, pts[i + 1], own, budget)
+        if s == nil then return nil end
+        if not s then break end
+        i = i + 1
     end
-    return { len = total, at = c, d = math.max(0, total - len(from, to)), turns = turns }
+    local c = edgeOf(from, pts[i], pts[i + 1], own, budget)
+    if not c then return nil end
+    local total = len(from, c) + len(c, pts[i + 1])
+    local turns = { turn(from, c, pts[i + 1]) }
+    local prev = c
+    for j = i + 1, n - 1 do
+        total = total + len(pts[j], pts[j + 1])
+        turns[#turns + 1] = turn(prev, pts[j], pts[j + 1])
+        prev = pts[j]
+    end
+    return { len = total, at = c, d = math.max(0, total - len(from, to)), turns = turns, after = pts[i + 1], flat = way.flat }
+end
+
+--- A way's answer moved to where the listener now stands, without a ray: the same corner, the length and first bend
+--- from here (while a search for a better one goes on, so the sound does not stay where the listener was).
+function Ways.moved(f, was, from, to)
+    if type(f) ~= 'table' or not f.at or not was then return f end
+    local total = f.len - len(was, f.at) + len(from, f.at)
+    local turn = f.flat and turnFlat or Acoustics.turn
+    local turns = { f.after and turn(from, f.at, f.after) or f.turns[1] }
+    for i = 2, #f.turns do turns[i] = f.turns[i] end
+    return { len = total, at = f.at, d = math.max(0, total - len(from, to)), turns = turns, after = f.after,
+             flat = f.flat, found = f.found or was }   -- (where it was really found)
 end
 
 -- A small binary heap of steps by their estimate: f, the square, the square it is reached from (false: a start), the
@@ -224,6 +265,56 @@ local function attach(p, top, own, budget, now)
             end
         end
     end
+    return out
+end
+
+--- How far `p` is from the line a-b, flat.
+local function offLine(p, a, b)
+    local dx, dy = b[1] - a[1], b[2] - a[2]
+    local l2 = dx * dx + dy * dy
+    local t = l2 > 0 and math.max(0, math.min(1, ((p[1] - a[1]) * dx + (p[2] - a[2]) * dy) / l2)) or 0
+    local qx, qy = a[1] + dx * t - p[1], a[2] + dy * t - p[2]
+    return math.sqrt(qx * qx + qy * qy)
+end
+
+--- The points of a way kept when it is pulled straight to within SIMPLE (the first and last always).
+local function straightened(pts)
+    local keep = { [1] = true, [#pts] = true }
+    local todo = { { 1, #pts } }
+    while #todo > 0 do
+        local seg = table.remove(todo)
+        local i, j = seg[1], seg[2]
+        local worst, at = SIMPLE, nil
+        for k = i + 1, j - 1 do
+            local d = offLine(pts[k], pts[i], pts[j])
+            if d > worst then worst, at = d, k end
+        end
+        if at then
+            keep[at] = true
+            todo[#todo + 1] = { i, at }
+            todo[#todo + 1] = { at, j }
+        end
+    end
+    local out = {}
+    for k = 1, #pts do if keep[k] then out[#out + 1] = pts[k] end end
+    return out
+end
+
+local function flat(a, b)
+    local dx, dy = a[1] - b[1], a[2] - b[2]
+    return math.sqrt(dx * dx + dy * dy)
+end
+
+--- A way's points from its anchor to the voice, pulled straight, corners close together made one (MERGE: the first of
+--- them stands for them; one close by the voice is the voice).
+local function routeOf(pts)
+    local v = straightened(pts)
+    local out = { v[1] }
+    for k = 2, #v - 1 do
+        if flat(v[k], out[#out]) >= MERGE then out[#out + 1] = v[k] end
+    end
+    local last = v[#v]
+    if #out > 1 and flat(out[#out], last) < MERGE then out[#out] = last else out[#out + 1] = last end
     return out
 end
 
@@ -382,15 +473,14 @@ function Ways.step(s, budget, quota)
     local b = lo
     if b == a then
         -- One bend: both see square a, and `to` sees all the line from it on to `to`.
-        return { anchor = path[a], toward = to }
+        return { pts = { path[a], to }, flat = true }
     end
-    -- More: the corner is on the way out of square a; the rest is as found, to where `to` starts seeing (its own
-    -- corner, found once).
+    -- More: from square a, the squares as found to where `to` starts seeing (its own corner, found once), then `to`;
+    -- pulled straight, every corner on it is a bend (routeOf).
     local c2 = edgeOf(to, path[b], path[b - 1], s.own, budget) or path[b]
-    local rest = 0
-    for i = a + 1, b - 2 do rest = rest + len(path[i], path[i + 1]) end
-    if b - 1 > a then rest = rest + len(path[b - 1], c2) else rest = rest + len(path[a + 1], c2) end
-    rest = rest + len(c2, to)
-    return { anchor = path[a], toward = path[a + 1],
-             rest = { len = rest, after = c2, turns = { Acoustics.turn(path[a + 1], c2, to) } } }
+    local pts = {}
+    for i = a, b - 1 do pts[#pts + 1] = path[i] end
+    pts[#pts + 1] = c2
+    pts[#pts + 1] = to
+    return { pts = routeOf(pts), flat = true }
 end

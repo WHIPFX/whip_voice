@@ -288,6 +288,9 @@ local function lineOf(id, from, to, own, range, pass)
         probes[id] = a
         return a
     end
+    -- The last answer, from where the listener now stands (while this pass has no rays left, or a search goes on): the
+    -- same corner, its length and bend from here, so the sound does not stay where they were.
+    local function lastHere() return Ways.moved(r.last, r.lastFrom, from, to) end
     -- Nobody moved: as it was.
     if r.settled and r.last ~= nil and not far(r.lastFrom, from, STILL) and not far(r.lastTo, to, STILL) then
         probes[id] = r.last
@@ -299,7 +302,7 @@ local function lineOf(id, from, to, own, range, pass)
     local sharp = nil
     if r.way and not far(r.wayTo, to, STILL) and not far(r.wayFrom, from, KEEP_MOVE) then
         local f = Ways.follow(r.way, from, to, own, closeRays)
-        if f == nil then return answer(r.last or true, false) end   -- (no rays left this pass)
+        if f == nil then return answer(lastHere() or true, false) end   -- (no rays left this pass)
         if f then
             local bend = 0
             for _, t in ipairs(f.turns) do bend = bend + t end
@@ -313,9 +316,9 @@ local function lineOf(id, from, to, own, range, pass)
     -- 2. Close round what the line hit.
     local w = nil
     if pos then w = wayRound(from, to, pos, own) end
-    if w == nil and pos then return answer(sharp or r.last or true, false) end   -- (no rays left this pass)
+    if w == nil and pos then return answer(sharp or lastHere() or true, false) end   -- (no rays left this pass)
     if w then
-        r.way, r.wayTo, r.wayFrom = { anchor = w, toward = to }, to, from
+        r.way, r.wayTo, r.wayFrom = { pts = { w, to } }, to, from
         local f = Ways.follow(r.way, from, to, own, closeRays)
         if f then return answer(f, true) end
         r.way = nil
@@ -335,7 +338,7 @@ local function lineOf(id, from, to, own, range, pass)
             if f == false then r.way = nil end
         end
     end
-    return answer(sharp or r.last or true, false)
+    return answer(sharp or lastHere() or true, false)
 end
 
 local function bendOf(f)
@@ -366,10 +369,18 @@ local function secondWay(id, from, to, own, range, pass, first)
         r.last2, r.last2From, r.last2To, r.settled2 = f, from, to, settled
         return f
     end
+    -- The last second way, from where the listener now stands (while a search goes on, as lineOf's lastHere); let go of
+    -- once they are well away from where it was found (it would be heard from a corner long left behind).
+    local function last2Here()
+        local f = Ways.moved(r.last2, r.last2From, from, to)
+        if type(f) ~= 'table' or not f.at then return nil end
+        if (f.found and far(f.found, from, 2 * KEEP_MOVE)) or not flatFar(f.at, c1, APART) then return nil end
+        return f
+    end
     -- The second way found before: by the first's rules, and still through another opening than the first's corner.
     if r.way2 and not far(r.way2To, to, STILL) and not far(r.way2From, from, KEEP_MOVE) then
         local f = Ways.follow(r.way2, from, to, own, closeRays)
-        if f == nil then return answer2(r.last2, false) end            -- (no rays left this pass)
+        if f == nil then return answer2(last2Here(), false) end         -- (no rays left this pass)
         if f and f.at and flatFar(f.at, c1, APART) then return answer2(f, true) end
     end
     r.way2 = nil
@@ -396,12 +407,12 @@ local function secondWay(id, from, to, own, range, pass, first)
     local s = r.search2
     if s and (far(s.from, from, SEARCH_FROM) or far(s.to, to, STILL) or flatFar(s.avoid[1], c1, APART)) then s = nil end
     r.search2 = s
-    if pass.searched then return answer2(r.last2, false) end
+    if pass.searched then return answer2(last2Here(), false) end
     pass.searched = true
     s = s or Ways.start(from, to, own, range, { { c1[1], c1[2], APART } })
     r.search2 = s
     local found = Ways.step(s, pass.search, SEARCH_SQUARES)
-    if found == nil then return answer2(r.last2, false) end            -- (goes on next pass)
+    if found == nil then return answer2(last2Here(), false) end         -- (goes on next pass)
     r.search2 = nil
     if not found then
         r.none2 = { from = from, to = to, c1 = c1 }
