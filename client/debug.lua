@@ -2,9 +2,10 @@
 -- whip_voice — /voicedebug (admins)
 -- ============================================
 --
--- Shows, above every player you can hear, what their voice is going through right now: how many dB
--- quieter, where the treble is cut, and why ("closed door", "doorway + window", "car", "clear"). A
--- yellow line runs to the doorway their voice is coming out of. And your own room's echo, bottom left.
+-- Shows, above every player and world voice you can hear (a lore character, each speaker playing a song),
+-- what that voice is going through right now: how many dB quieter, where the treble is cut, and why
+-- ("closed door", "doorway + window", "car", "clear"). A yellow line runs to the doorway the voice is
+-- coming out of. And your own room's echo, bottom left.
 --
 -- And every OPENING of the building you stand in, where it is, labelled with what whip_voice thinks it
 -- is: door (open / closed), window, doorway, mirror. For checking an MLO's doors and windows are read
@@ -57,14 +58,26 @@ RegisterCommand('voicedebug', function()
             local env = VoiceEnv
             if env then
                 for id, a in pairs(env.v or {}) do
+                    -- Where the voice comes from: a ped's head, followed every frame; anything else (a speaker's
+                    -- middle, a fixed spot) where the voice loop last placed it, marked with a small pink ball.
                     local ped = VoicePeds and VoicePeds[id]
-                    if ped and DoesEntityExist(ped) then
+                    local x, y, z, thing = nil, nil, nil, false
+                    if ped and DoesEntityExist(ped) and IsEntityAPed(ped) then
                         local h = GetPedBoneCoords(ped, 31086, 0.0, 0.0, 0.0)
+                        x, y, z = h.x, h.y, h.z
+                    else
+                        local w = VoiceAt and VoiceAt[id]
+                        if w then x, y, z, thing = w[1], w[2], w[3], true end
+                    end
+                    if x then
                         local clear = a.g == 0
-                        text3d(h.x, h.y, h.z + 0.45, ('%s  %+d dB  %s Hz'):format(a.why or '?', math.floor(a.g + 0.5),
+                        if thing then
+                            DrawMarker(28, x, y, z, 0, 0, 0, 0, 0, 0, 0.1, 0.1, 0.1, 255, 90, 200, 200, false, false, 2, false, (nil) --[[@as string]], (nil) --[[@as string]], false)
+                        end
+                        text3d(x, y, z + 0.45, ('%s  %+d dB  %s Hz'):format(a.why or '?', math.floor(a.g + 0.5),
                             a.f >= 22000 and 'open' or tostring(a.f)), clear and 140 or 255, clear and 255 or 200, clear and 140 or 90)
                         if a.at then
-                            DrawLine(h.x, h.y, h.z, a.at[1], a.at[2], a.at[3], 255, 220, 60, 200)
+                            DrawLine(x, y, z, a.at[1], a.at[2], a.at[3], 255, 220, 60, 200)
                             DrawMarker(28, a.at[1], a.at[2], a.at[3], 0, 0, 0, 0, 0, 0, 0.15, 0.15, 0.15, 255, 220, 60, 160, false, false, 2, false, (nil) --[[@as string]], (nil) --[[@as string]], false)
                         end
                     end

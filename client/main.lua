@@ -33,6 +33,7 @@ local anyTalkers = false
 local live = {}          -- [identity] = true while that speaker holds push-to-talk (the page says)
 local anyLive = false
 local pedOf = {}         -- [identity] = the ped that voice comes from, as last found (nil = not in this game)
+local atOf = {}          -- [identity] = { x, y, z }: where that voice comes from, as last placed (nil = not placed)
 local envCache = {}      -- [identity] = how that voice travels, as last worked out
 local envAt = {}         -- [identity] = when that was (nil = at the next chance)
 
@@ -66,8 +67,8 @@ local function forgetVoices()
     heard, heardRange, heardFx, talkers, anyTalkers, placesOf = {}, {}, {}, {}, false, {}
     live, anyLive = {}, false
     envCache, envAt = {}, {}
-    pedOf = {}
-    VoicePeds = pedOf
+    pedOf, atOf = {}, {}
+    VoicePeds, VoiceAt = pedOf, atOf
     sayEntsTalking()
 end
 
@@ -488,7 +489,7 @@ local startPose
 --- Forget one heard voice (or one place of a voice heard from several).
 local function forgetHeard(id)
     heard[id], heardRange[id], heardFx[id], talkers[id], live[id] = nil, nil, nil, nil, nil
-    pedOf[id], envCache[id], envAt[id] = nil, nil, nil
+    pedOf[id], atOf[id], envCache[id], envAt[id] = nil, nil, nil, nil
 end
 
 RegisterNetEvent('whip_voice:client:hear', function(msg)
@@ -626,6 +627,7 @@ end
 -- on every beat; only the voices due are worked out and sent.
 VoiceEnv = nil    -- how every heard voice travels, as last worked out, for /voicedebug
 VoicePeds = pedOf -- [identity] = the ped that voice comes from, for /voicedebug
+VoiceAt = atOf    -- [identity] = { x, y, z } where it comes from (a speaker's middle, a spot), for /voicedebug
 
 startPose = function()
     if poseRunning or next(heard) == nil then return end
@@ -655,13 +657,14 @@ startPose = function()
                             elseif spot then h = middleOf(ped)
                             else h = GetOffsetFromEntityInWorldCoords(ped, 0.0, 0.0, 0.5) end
                             where[id] = { h.x, h.y, h.z }
+                            atOf[id] = where[id]
                             local every = live[id] and ENV_LIVE_MS or ENV_QUIET_MS
                             if not envAt[id] or now - envAt[id] >= every then
                                 -- (A megaphone or a speaker's sound is loud: it gets through a car's cabin.)
                                 due[id] = { ped = ped or 0, head = where[id], range = heardRange[id], loud = heardFx[id] ~= nil }
                             end
                         else
-                            where[id] = false            -- this game cannot place them: silent
+                            where[id], atOf[id] = false, nil   -- this game cannot place them: silent
                         end
                     end
                 end
