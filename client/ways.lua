@@ -39,7 +39,7 @@ local BAND = 6.0            -- a square's ground is looked for again by a search
 local MAX_KEPT = 20000      -- answers kept; past this they are all forgotten and found again
 local EDGE_STEPS = 6        -- halvings to find a corner (to 1/64 of the line it is on)
 
-local probe                 -- probe(from, to, flags) -> answered, hit, pos, entity (client/environment.lua)
+local probe                 -- probe(from, to, flags, ignore) -> answered, hit, pos, entity (client/environment.lua)
 function Ways.setProbe(fn) probe = fn end
 
 local grounds = {}   -- [square] = { z = its ground (false: none found), top = where the ray down began, at = when }
@@ -109,10 +109,11 @@ local function joined(cx, cy, nb, top, budget, now)
     return open
 end
 
---- Does `p` see `q`? (The voice's own object in the way does not count.) nil when no rays are left.
+--- Does `p` see `q`? (The voice's own object in the way does not count: the ray passes through it, so a ray from
+--- inside it still meets what stands behind it.) nil when no rays are left.
 local function sees(p, q, own, budget)
     if not spend(budget) then return nil end
-    local answered, hit, _, ent = probe(p, q, 1 + 16)
+    local answered, hit, _, ent = probe(p, q, 1 + 16, own)
     if not answered then return nil end
     return not hit or (own ~= nil and own ~= 0 and ent == own)
 end

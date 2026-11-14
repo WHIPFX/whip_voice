@@ -145,8 +145,13 @@ end
 --- on others: either counts.)
 local function isHit(hit) return hit == 1 or hit == true end
 
---- One ray from `from` to `to`, ignoring this player's own ped. Answers: whether the game answered,
---- whether it hit, where, and what it hit.
+--- One ray from `from` to `to`, ignoring `ignore` (the voice's own object), else this player's own ped.
+--- Answers: whether the game answered, whether it hit, where, and what it hit.
+---
+--- A RAY FROM INSIDE THE VOICE'S OWN OBJECT HITS THAT OBJECT FIRST, and the game answers only the first
+--- hit: the building behind was never seen. The way-finder's rays from a speaker out to the open ground
+--- all said "clear", so it took ways straight through a block (a speaker two streets away heard as if
+--- round a lamp post). The game is told to pass through the voice's own object instead.
 ---
 --- ANSWERED IN THE SAME CALL, NOT LATER. These rays used to be started without waiting and read on a
 --- later pass, 200-500 ms on — and by then the game had thrown every answer away (Josh saw it on
@@ -154,8 +159,9 @@ local function isHit(hit) return hit == 1 or hit == true end
 --- ray's answer at once or on the very next frame.) A short ray answered at once is cheap: one per
 --- talking voice, five times a second.
 local startProbe = StartExpensiveSynchronousShapeTestLosProbe or StartShapeTestLosProbe
-local function probe(from, to, flags)
-    local h = startProbe(from[1], from[2], from[3], to[1], to[2], to[3], flags, PlayerPedId(), 7)
+local function probe(from, to, flags, ignore)
+    if not ignore or ignore == 0 then ignore = PlayerPedId() end
+    local h = startProbe(from[1], from[2], from[3], to[1], to[2], to[3], flags, ignore, 7)
     if not h or h == 0 then return false, false, nil end
     local status, hit, pos, _, ent = GetShapeTestResult(h)
     if status ~= 2 then return false, false, nil end
@@ -240,10 +246,10 @@ local function wayRound(from, to, hitAt, own)
     local function via(w)
         if closeRays.left < 2 then return nil end
         closeRays.left = closeRays.left - 1
-        local a1, h1, _, e1 = probe(from, w, 1 + 16)
+        local a1, h1, _, e1 = probe(from, w, 1 + 16, own)
         if not clearRay(a1, h1, e1, own) then return false end
         closeRays.left = closeRays.left - 1
-        local a2, h2, _, e2 = probe(w, to, 1 + 16)
+        local a2, h2, _, e2 = probe(w, to, 1 + 16, own)
         return clearRay(a2, h2, e2, own) and true or false
     end
     for _, step in ipairs(ROUND_STEPS) do
@@ -263,7 +269,7 @@ end
 --- last one.
 --- `range`: the voice's, the longest way worth looking for; `pass`: this pass's { searched, search = rays }.
 local function lineOf(id, from, to, own, range, pass)
-    local answered, hit, pos, ent = probe(from, to, 1 + 16)
+    local answered, hit, pos, ent = probe(from, to, 1 + 16, own)
     if not answered then return probes[id] or false end
     if clearRay(answered, hit, ent, own) then
         probes[id] = false
