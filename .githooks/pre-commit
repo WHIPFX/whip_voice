@@ -1,0 +1,3 @@
+#!/bin/sh
+# Convert staged stream/ changes into stream_enhanced/ (see .githooks/enhanced_assets.py).
+exec python "$(git rev-parse --show-toplevel)/.githooks/enhanced_assets.py" hook
