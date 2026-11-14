@@ -298,15 +298,19 @@ window.VoiceAudio = (() => {
     /** Where a voice's sound goes in first: its effect, or straight to the muffle filter. */
     const into = (v) => (v.fx ? v.fx.input : v.filter);
 
-    /** A speaker's effect on (a built-in recipe's name) or off (null). Swapped in place, even mid-sentence. */
-    function setFx(id, name) {
+    /** A speaker's effect on or off (null): a built-in recipe's name ('megaphone'), or a recipe of its own (a world
+     *  voice's sound, SetWorldVoiceSound: a speaker's). Swapped in place, even mid-sentence; the same one again
+     *  changes nothing. */
+    function setFx(id, fx) {
         const v = voices.get(id);
         if (!v) return;
-        const want = name && VoiceFx.has(name) ? name : null;
-        if ((v.fx ? v.fx.name : null) === want) return;
+        const recipe = Array.isArray(fx) && fx.length > 0;
+        const want = recipe ? 'r:' + JSON.stringify(fx) : (fx && VoiceFx.has(fx) ? fx : null);
+        if ((v.fx ? v.fx.key : null) === want) return;
         if (v.plugged) { try { v.source.disconnect(into(v)); } catch (_) { /* not connected */ } }
         if (v.fx) v.fx.dispose();
-        v.fx = want ? VoiceFx.named(context(), want) : null;
+        v.fx = !want ? null : recipe ? VoiceFx.chain(context(), fx) : VoiceFx.named(context(), want);
+        if (v.fx) v.fx.key = want;
         if (v.fx) {
             v.fx.connect(v.filter);
             if (v.plugged) { v.fx.plug(); if (v.live) v.fx.live(true); }

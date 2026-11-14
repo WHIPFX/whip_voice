@@ -178,17 +178,20 @@
         if (pub && pub.isSubscribed) pub.setSubscribed(false);
     }
 
-    /** A voice near this player (the hear list), on the normal 3D chain. */
-    function hearUse(id) {
+    /** A voice near this player (the hear list), on the normal 3D chain. `as`: the 3D chain's own name, for one place
+     *  of a voice heard from several ('<identity>#<n>': each place of a room full of speakers is a chain of its own,
+     *  all fed by the one track). */
+    function hearUse(id, as) {
+        const vid = as || id;
         return {
             add: (source, on) => {
                 const h = hear.get(id);
-                VoiceAudio.add(id, source, h ? h.range : 8, on);
-                if (h && h.full) VoiceAudio.setRange(id, h.range, h.full);   // (a world voice's own full-volume circle)
-                VoiceAudio.setFx(id, h ? h.fx : null);
+                VoiceAudio.add(vid, source, h ? h.range : 8, on);
+                if (h && h.full) VoiceAudio.setRange(vid, h.range, h.full);   // (a world voice's own full-volume circle)
+                VoiceAudio.setFx(vid, h ? h.fx : null);
             },
-            remove: () => VoiceAudio.remove(id),
-            live: (on) => VoiceAudio.setLive(id, on),
+            remove: () => VoiceAudio.remove(vid),
+            live: (on) => VoiceAudio.setLive(vid, on),
         };
     }
 
@@ -473,9 +476,26 @@
                 if (VoiceLines.speakerLive(e.id)) VoiceAudio.setLive(e.id, true);
                 continue;
             }
-            hear.set(e.id, { src: e.src, range: e.range, fx: e.fx || null, full: e.full || 0 });
+            const was = hear.get(e.id);
+            const places = Array.isArray(e.pts) ? e.pts.length : 0;
+            // Moved from one place to several, or back: the old kind of use goes first.
+            if (was && !was.speaker && !was.places && places > 0) unwant(e.id, VOICE, 'hear');
+            if (was && was.places > 0 && places === 0) for (let i = 1; i <= was.places; i++) unwant(e.id, VOICE, 'hear#' + i);
+            hear.set(e.id, { src: e.src, range: e.range, fx: e.fx || null, full: e.full || 0, places });
+            if (places > 0) {
+                // Heard from several places (speakers): one use of its track per place, each a 3D chain of its own
+                // ('<identity>#<n>', where client/main.lua places it). Places it no longer has are let go of.
+                for (let i = places + 1; was && i <= (was.places || 0); i++) unwant(e.id, VOICE, 'hear#' + i);
+                for (let i = 1; i <= places; i++) {
+                    const vid = e.id + '#' + i;
+                    VoiceAudio.setRange(vid, e.range, e.full);
+                    VoiceAudio.setFx(vid, e.fx || null);
+                    want(e.id, VOICE, 'hear#' + i, hearUse(e.id, vid));
+                }
+                continue;
+            }
             VoiceAudio.setRange(e.id, e.range, e.full);
-            VoiceAudio.setFx(e.id, e.fx || null);      // the megaphone, or none
+            VoiceAudio.setFx(e.id, e.fx || null);      // the megaphone, a sound recipe, or none
             want(e.id, VOICE, 'hear', hearUse(e.id));
         }
         for (const id of m.remove || []) {
@@ -484,6 +504,8 @@
             if (h && h.speaker) {
                 VoiceAudio.remove(id);
                 VoiceLines.forgetSpeaker(id);
+            } else if (h && h.places > 0) {
+                for (let i = 1; i <= h.places; i++) unwant(id, VOICE, 'hear#' + i);
             } else {
                 unwant(id, VOICE, 'hear');
             }

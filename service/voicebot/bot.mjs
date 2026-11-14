@@ -15,9 +15,13 @@
 //                                                                   go on a radio frequency), as a player's microphone
 //   POST   /calls/:id/allow     { allow, radio? }                  who may hear it (identities), and who its radio
 //                                                                   track; nobody else can
-//   POST   /calls/:id/play      { audio? }                         plays it (or this recording instead, which stays
+//   POST   /calls/:id/play      { audio?, loop?, music?, fadeIn? }  plays it (or this recording instead, which stays
 //                                                                   its recording) once someone allowed is listening; a
-//                                                                   play while one is under way cuts that one off
+//                                                                   play while one is under way cuts that one off.
+//                                                                   loop: over and over until stopped; music: a song
+//                                                                   (musicSeconds / musicBytes, not a line's limits);
+//                                                                   fadeIn: ms from silence to full at its start
+//   POST   /calls/:id/stop      { fade? }                          stops what it plays (fade: ms down to silence first)
 //   GET    /calls/:id                                              { state, playedMs, duration }
 //   DELETE /calls/:id                                              leave
 //   GET    /health                                                 { ok, version, calls, max }
@@ -27,9 +31,11 @@
 //
 // RECORDINGS come only from the link starts in config.json (`audioLinks`, Fivemanage by default), a plain address
 // after it, no redirects, or from an mp3/ogg/wav file on this machine that a FiveM resource ships ("file:<path>",
-// whip_voice's "@resource/path"). At most `maxBytes` and `maxSeconds`. Each one is read once and kept for the next call.
+// whip_voice's "@resource/path"). At most `maxBytes` and `maxSeconds`, or for music (a speaker's song) `musicBytes`
+// and `musicSeconds`. Each one is read once and kept for the next call.
 //
-// config.json (written by whip_voice's setup wizard): listen, token, maxCalls, audioLinks, maxSeconds, maxBytes, and
+// config.json (written by whip_voice's setup wizard): listen, token, maxCalls, audioLinks, maxSeconds, maxBytes,
+// musicSeconds and musicBytes (optional: 600 s and 40 MB), and
 // "agent" (optional): the AI NPCs (agent/index.mjs: its own requests under /agent, the same token). With no
 // "agent", there are none and the service is the voice bot it always was.
 
@@ -47,7 +53,7 @@ import decode from '@audio/decode';
 import { AgentHost } from './agent/index.mjs';
 import { concat } from './agent/audio.mjs';
 
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RATE = 48000, FRAME = RATE / 100;          // 10 ms frames, mono, as the voice room's audio
 // A RECORDING IS SENT AT RECORDING QUALITY. Left to LiveKit's default it went at a speech bitrate with DTX (which
@@ -87,6 +93,9 @@ function loadConfig() {
         audioLinks: links,
         maxSeconds: Math.max(1, Math.min(600, Number(c.maxSeconds) || 120)),
         maxBytes: Math.max(64 * 1024, Math.min(64 * 1024 * 1024, Number(c.maxBytes) || 15 * 1024 * 1024)),
+        // A song on a speaker: longer than any line. Decoded whole, 48 kHz mono: 10 minutes is about 58 MB in memory.
+        musicSeconds: Math.max(1, Math.min(1200, Number(c.musicSeconds) || 600)),
+        musicBytes: Math.max(64 * 1024, Math.min(100 * 1024 * 1024, Number(c.musicBytes) || 40 * 1024 * 1024)),
         cacheBytes: Math.max(0, Number(c.cacheBytes) || 200 * 1024 * 1024),
         agent: c.agent && typeof c.agent === 'object' ? c.agent : null,
     };
@@ -178,19 +187,26 @@ function linkProblem(url) {
     return null;
 }
 
-async function download(url) {
+/** How big and long a recording may be: a line's (a voice), or a song's (music, on a speaker). */
+const LINE = () => ({ seconds: CFG.maxSeconds, bytes: CFG.maxBytes });
+const MUSIC = () => ({ seconds: CFG.musicSeconds, bytes: CFG.musicBytes });
+const tooBig = (lim) => new Error(`the recording is over ${Math.round(lim.bytes / 1048576)} MB`);
+const tooLong = (lim) => new Error(`the recording is over ${lim.seconds} seconds`);
+
+async function download(url, lim) {
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 15000);
+    // A song takes longer to come down than a line.
+    const timer = setTimeout(() => ctl.abort(), lim.bytes > CFG.maxBytes ? 60000 : 15000);
     try {
         const res = await fetch(url, { redirect: 'error', signal: ctl.signal });
         if (!res.ok) throw new Error(`the recording answered ${res.status}`);
         const len = Number(res.headers.get('content-length'));
-        if (len && len > CFG.maxBytes) throw new Error(`the recording is over ${Math.round(CFG.maxBytes / 1048576)} MB`);
+        if (len && len > lim.bytes) throw tooBig(lim);
         const chunks = [];
         let got = 0;
         for await (const chunk of res.body) {
             got += chunk.length;
-            if (got > CFG.maxBytes) throw new Error(`the recording is over ${Math.round(CFG.maxBytes / 1048576)} MB`);
+            if (got > lim.bytes) throw tooBig(lim);
             chunks.push(chunk);
         }
         return Buffer.concat(chunks);
@@ -200,11 +216,11 @@ async function download(url) {
 }
 
 /** The recording as 48 kHz mono 16-bit samples. */
-async function toPcm(bytes) {
+async function toPcm(bytes, lim) {
     const { channelData, sampleRate } = await decode(bytes);
     if (!channelData || !channelData.length || !sampleRate) throw new Error('not a recording this can read');
     const n = channelData[0].length;
-    if (n / sampleRate > CFG.maxSeconds) throw new Error(`the recording is over ${CFG.maxSeconds} seconds`);
+    if (n / sampleRate > lim.seconds) throw tooLong(lim);
     const mono = new Int16Array(n);
     for (let i = 0; i < n; i++) {
         let s = 0;
@@ -234,13 +250,15 @@ async function toPcm(bytes) {
     return pcm;
 }
 
-/** A recording kept by `key`: the cached one, or `load()` decoded once (for every call that asks meanwhile). */
-async function remembered(key, load) {
+/** A recording kept by `key`: the cached one, or `load()` decoded once (for every call that asks meanwhile). Held to
+ *  `lim` either way: a song kept for a speaker is still too long to be a line. */
+async function remembered(key, load, lim) {
+    const fits = (rec) => { if (rec.duration > lim.seconds * 1000) throw tooLong(lim); return rec; };
     const hit = cache.get(key);
-    if (hit) { cache.delete(key); cache.set(key, hit); return hit; }
-    if (fetching.has(key)) return fetching.get(key);
+    if (hit) { cache.delete(key); cache.set(key, hit); return fits(hit); }
+    if (fetching.has(key)) return fits(await fetching.get(key));
     const p = (async () => {
-        const pcm = await toPcm(await load());
+        const pcm = await toPcm(await load(), lim);
         const rec = { pcm, duration: Math.round((pcm.length / RATE) * 1000) };
         cache.set(key, rec);
         cacheBytes += pcm.byteLength;
@@ -266,7 +284,7 @@ function fileProblem(path) {
     return null;
 }
 
-async function fileRecording(path) {
+async function fileRecording(path, lim) {
     const bad = fileProblem(path);
     if (bad) throw new Error(bad);
     let st;
@@ -274,17 +292,18 @@ async function fileRecording(path) {
         throw new Error(e.code === 'ENOENT' ? `there is no ${basename(path)}` : `${basename(path)} cannot be read (${e.code})`);
     }
     if (!st.isFile()) throw new Error(`${basename(path)} is not a file`);
-    if (st.size > CFG.maxBytes) throw new Error(`the recording is over ${Math.round(CFG.maxBytes / 1048576)} MB`);
+    if (st.size > lim.bytes) throw tooBig(lim);
     // Changed on disk (same name, new take): decoded again.
-    return remembered(`file:${path}#${st.size}-${st.mtimeMs}`, () => readFile(path));
+    return remembered(`file:${path}#${st.size}-${st.mtimeMs}`, () => readFile(path), lim);
 }
 
-/** A call's recording: "file:<full path>" (a resource's file), else a link. */
-async function recording(audio) {
-    if (typeof audio === 'string' && audio.startsWith('file:')) return fileRecording(audio.slice(5));
+/** A call's recording: "file:<full path>" (a resource's file), else a link. `music`: a song's limits, not a line's. */
+async function recording(audio, music) {
+    const lim = music ? MUSIC() : LINE();
+    if (typeof audio === 'string' && audio.startsWith('file:')) return fileRecording(audio.slice(5), lim);
     const bad = linkProblem(audio);
     if (bad) throw new Error(bad);
-    return remembered(audio, () => download(audio));
+    return remembered(audio, () => download(audio, lim), lim);
 }
 
 // ---------------------------------------------------------------- calls
@@ -336,13 +355,18 @@ async function startCall(b) {
  *  ONE FEEDS THE SOURCE AT A TIME. The cut one's queued audio is dropped at once (clearQueue), and the new one
  *  starts when the cut one has stopped feeding: two captureFrame loops on one source at once is the RtcError
  *  "InvalidState - failed to capture frame", which ended the call, so the new line never played (Josh, 27 Oct:
- *  aiming at Dundee while he was still talking). */
-async function play(call) {
+ *  aiming at Dundee while he was still talking).
+ *
+ *  opts.loop: from the start again at the end, until stopped (a speaker's song). opts.fadeIn: ms from silence to full
+ *  at its very start (not at each loop). A stop with a fade (POST /stop) sets call.fadeOut: it goes down to silence over
+ *  that many frames, then stops as a play that ended does. */
+async function play(call, opts = {}) {
     const gen = ++call.gen;
     const cut = () => call.stop || call.gen !== gen;
     call.state = 'playing';
     call.playedMs = 0;
     call.used = Date.now();
+    call.fadeOut = null;
     const before = call.feeding;
     let fed;
     call.feeding = new Promise((r) => { fed = r; });
@@ -357,20 +381,47 @@ async function play(call) {
         if (cut()) return;
         setMuted(call, false);
         const pcm = call.rec.pcm;
-        for (let i = 0; i < pcm.length && !cut(); i += FRAME) {
-            // A copy of each 10 ms (see toPcm: a view would send the recording's first 10 ms over and over); the
-            // last one padded with silence.
-            const data = new Int16Array(FRAME);
-            data.set(pcm.subarray(i, Math.min(pcm.length, i + FRAME)));
-            await call.source.captureFrame(new AudioFrame(data, RATE, 1, FRAME));
-            call.playedMs = Math.round(((i + FRAME) / RATE) * 1000);
-        }
+        const fadeInFrames = Math.max(0, Math.round((Number(opts.fadeIn) || 0) / 10));
+        let sent = 0;           // frames sent since the start (the fade in counts these)
+        let faded = false;      // a stop's fade-out reached silence
+        do {
+            for (let i = 0; i < pcm.length && !cut(); i += FRAME) {
+                // A copy of each 10 ms (see toPcm: a view would send the recording's first 10 ms over and over); the
+                // last one padded with silence.
+                const data = new Int16Array(FRAME);
+                data.set(pcm.subarray(i, Math.min(pcm.length, i + FRAME)));
+                // Its level now: up from silence at the start (fade in), down to it once a stop asked to fade.
+                let g = sent < fadeInFrames ? (sent + 1) / fadeInFrames : 1;
+                const fo = call.fadeOut;
+                if (fo) { g *= Math.max(0, fo.left / fo.total); fo.left -= 1; }
+                if (g < 1) for (let k = 0; k < FRAME; k++) data[k] = Math.round(data[k] * g);
+                await call.source.captureFrame(new AudioFrame(data, RATE, 1, FRAME));
+                sent += 1;
+                call.playedMs = Math.round(((i + FRAME) / RATE) * 1000);
+                if (fo && fo.left <= 0) { faded = true; break; }
+            }
+        } while (opts.loop && !faded && !cut());
         if (!cut()) await call.source.waitForPlayout();
         if (!cut()) { setMuted(call, true); call.state = 'done'; call.used = Date.now(); }
     } finally {
+        call.fadeOut = null;
         fed();
         if (call.feeding && gen === call.gen) call.feeding = null;
     }
+}
+
+/** Stop what it plays: at once, or down to silence over `fadeMs` first. A call that is not playing has nothing to stop. */
+async function stopPlay(call, fadeMs) {
+    if (call.state !== 'playing') return;
+    const frames = Math.round(Math.max(0, Math.min(30000, Number(fadeMs) || 0)) / 10);
+    if (frames > 0) { call.fadeOut = { left: frames, total: frames }; return; }
+    call.gen += 1;                                       // the loop sees it is cut, and stops feeding
+    try { call.source.clearQueue(); } catch (_) { /* nothing queued */ }
+    if (call.feeding) await call.feeding;
+    if (call.stop) return;
+    setMuted(call, true);
+    call.state = 'done';
+    call.used = Date.now();
 }
 
 // Nothing is left behind: a call nobody ended goes after its recording's length and three minutes more; a voice
@@ -481,17 +532,24 @@ const server = http.createServer(async (req, res) => {
             if (call.state !== 'ready' && !again) return send(res, 409, { ok: false, error: `the call is ${call.state}` });
             if (b.audio != null) {
                 if (typeof b.audio !== 'string') return send(res, 400, { ok: false, error: 'audio' });
-                try { call.rec = await recording(b.audio); } catch (e) { return send(res, 422, { ok: false, error: e.message }); }
+                try { call.rec = await recording(b.audio, b.music === true); } catch (e) { return send(res, 422, { ok: false, error: e.message }); }
                 if (call.stop) return send(res, 409, { ok: false, error: 'the call ended' });
             }
             if (!call.rec) return send(res, 409, { ok: false, error: 'nothing to play: no recording yet' });
-            play(call).catch((e) => {
+            // Looping is for a voice that stays (a world voice: a speaker's song); a call plays its recording once.
+            const opts = { loop: call.keep && b.loop === true, fadeIn: Math.max(0, Math.min(30000, Number(b.fadeIn) || 0)) };
+            play(call, opts).catch((e) => {
                 console.log(`[voicebot] call ${call.id} could not play: ${e.message}`);
                 // A voice that stays (a lore character's) stays for its next line; a call has nothing more to do.
                 if (call.keep && !call.stop) { setMuted(call, true); call.state = 'done'; call.used = Date.now(); }
                 else leave(call, null);
             });
             return send(res, 200, { ok: true, duration: call.rec.duration });
+        }
+        if (req.method === 'POST' && parts[2] === 'stop') {
+            const b = await readBody(req);
+            await stopPlay(call, b.fade);
+            return send(res, 200, { ok: true });
         }
         return send(res, 404, { ok: false, error: 'no such request' });
     } catch (e) {
