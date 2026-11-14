@@ -32,7 +32,7 @@ local MAX_ALL = math.max(1, math.floor(tonumber(S.maxPlaced) or 64))
 local RANGE_MIN, RANGE_MAX = 5, math.max(5, math.min(300, math.floor(tonumber(S.maxRange) or 100)))
 local KVP = 'whip_voice_speakers'
 local REACH = 3.5           -- metres from a speaker to use it (from the player, server-side: a little slack)
-local PLACE_REACH = 9.0     -- metres from the player a speaker may be put (the placer's reach is from the camera)
+local PLACE_REACH = 12.0    -- metres from the player a speaker may be put (the placer reaches 10 m from the camera)
 local CAR_SLACK = 5.0       -- a car's speaker is told from the car's middle: its length more
 local PENDING_S = 300       -- seconds a Use waits for the speaker to be put down
 local CAR_GONE_MS = 10000   -- a car missing this long has gone: its speaker drops where it last was
@@ -80,8 +80,9 @@ end
 local function views()
     local out = {}
     for id, s in pairs(Speakers.byId) do
-        out[#out + 1] = { id = id, model = s.model, coords = s.coords, net = s.car and s.car.net or nil,
-                          offset = s.car and s.car.offset or nil, song = s.link and s.link:match('([^/]+)$') or nil,
+        out[#out + 1] = { id = id, model = s.model, coords = s.coords, rot = s.rot, net = s.car and s.car.net or nil,
+                          offset = s.car and s.car.offset or nil, carRot = s.car and s.car.rot or nil,
+                          song = s.link and s.link:match('([^/]+)$') or nil,
                           playing = s.playing == true, volume = s.volume, range = s.range }
     end
     return out

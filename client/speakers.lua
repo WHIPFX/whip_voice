@@ -6,20 +6,27 @@
 -- too) and sends where it went (server/speakers.lua puts it down). Behind every speaker, a prompt: the song (a link,
 -- typed in a dialog), Play / Stop, Volume and Range (typed into the prompt), Pick up.
 --
--- One action for every speaker: on the speaker's model wherever it stands (whip's model prompts), offered only on the
--- ones that are speakers (another prop of the same model, a club's, gets nothing). Behind = its back, the side away
--- from whoever put it down (the placer starts it facing the way they face).
+-- ONE PROMPT PER SPEAKER, ON ITS BACK, a sign that faces out of its back (not one that turns to the player). A speaker
+-- on a car: the prompt rides THE CAR by its network id (whip's riding prompts follow it as it moves, streams out and
+-- back), at the speaker's spot on the car plus its back, turning with the car. One on the ground: a fixed sign behind
+-- it. Nothing is looked for in the world: where each speaker is comes from the server, so the prompt is where it is
+-- whether or not this game has made its prop yet. (Not whip's model prompts: those are for props fixed in the map, and
+-- stay where they first found a prop.)
+--
+-- Its back is its model's -y face (+y is a prop's front in GTA, as whip's prop prompts read it), and the placer
+-- starts it facing the way the player faces, so its back is towards them as they put it down.
 
-local SPEAKER_KEY = 'speakers'
 local S = Config.Speaker or {}
 local MODEL = S.model or 'ba_prop_battle_club_speaker_small'
+local GROUP = 'whip_voice_speakers'
 local list = {}          -- [id] = what the server says of it (server/speakers.lua views)
+local mounted = {}       -- [id] = where its prompt was put (a key), while it is up
 
 -- ---- Putting one down ----------------------------------------------------------------------------
 
 RegisterNetEvent('whip_voice:client:placeSpeaker', function(model)
     CreateThread(function()
-        local spot, why = Whip.call('PlaceObject', model, { label = 'Speaker', vehicles = true, reach = 4.0 })
+        local spot, why = Whip.call('PlaceObject', model, { label = 'Speaker', vehicles = true })
         if not spot then
             if why ~= 'cancelled' then print('[whip_voice] the speaker was not put down: ' .. tostring(why)) end
             return
@@ -30,145 +37,165 @@ RegisterNetEvent('whip_voice:client:placeSpeaker', function(model)
     end)
 end)
 
--- ---- Which speaker a prop is ---------------------------------------------------------------------
+-- ---- Where its prompt goes -----------------------------------------------------------------------
 
---- The speaker this object is (this game's copy of its prop), or nil: on a car, the one riding that car at that spot;
---- on the ground, the one at that spot.
-local function speakerOf(obj)
-    if not obj or obj == 0 or not DoesEntityExist(obj) then return nil end
-    local at = GetEntityCoords(obj)
-    local car = GetEntityAttachedTo(obj)
-    for _, v in pairs(list) do
-        if v.net then
-            if car ~= 0 and NetworkDoesNetworkIdExist(v.net) and NetworkGetEntityFromNetworkId(v.net) == car then
-                local o = v.offset
-                local want = GetOffsetFromEntityInWorldCoords(car, o[1] + 0.0, o[2] + 0.0, o[3] + 0.0)
-                if #(at - want) < 1.0 then return v end
-            end
-        elseif car == 0 then
-            local c = v.coords
-            if #(at - vector3(c[1] + 0.0, c[2] + 0.0, c[3] + 0.0)) < 0.75 then return v end
-        end
-    end
-    return nil
-end
-
-local function send(ctx, what, value)
-    local v = speakerOf(ctx.entity)
-    if not v then return ctx.refuse('That speaker is gone') end
-    TriggerServerEvent('whip_voice:server:speaker', v.id, what, value or '')
-end
-
--- ---- The prompt behind it ------------------------------------------------------------------------
-
-local mounted = false
-
-local function mount()
-    -- Behind it: its model's back face (-y in its own frame), a little out, halfway up.
-    local hash = GetHashKey(MODEL)
+--- Its back, in its own frame: the middle of its -y face, a little out, halfway up (from the model's box).
+local back = nil
+local function backOf()
+    if back then return back end
     local lo, hi = vector3(-0.3, -0.3, 0.0), vector3(0.3, 0.3, 0.8)
+    local hash = GetHashKey(MODEL)
     if IsModelInCdimage(hash) then
         local a, b = GetModelDimensions(hash)
         if a and b then lo, hi = a, b end
     end
-    local back = vector3((lo.x + hi.x) / 2, lo.y - 0.12, (lo.z + hi.z) / 2)
-    local ok, why = Whip.call('AddAction', {
-        id = SPEAKER_KEY,
-        at = { model = MODEL, offset = back },
-        label = function(ctx)
-            local v = speakerOf(ctx.entity)
-            if not v then return 'Speaker' end
-            return v.playing and ('Speaker  ·  ' .. (v.song or 'playing')) or 'Speaker'
+    back = vector3((lo.x + hi.x) / 2, lo.y - 0.1, (lo.z + hi.z) / 2)
+    return back
+end
+
+--- (x, y) turned by a heading, as the game turns an entity's own frame.
+local function turned(x, y, deg)
+    local r = math.rad(deg)
+    return x * math.cos(r) - y * math.sin(r), x * math.sin(r) + y * math.cos(r)
+end
+
+--- Its prompt's `at`: on a car, riding the car by its network id at the speaker's spot on it plus its back, a sign
+--- facing out of its back as the car turns; on the ground, a fixed sign behind it.
+local function anchorOf(v)
+    local b = backOf()
+    if v.net then
+        local yaw = tonumber(v.carRot and v.carRot[3]) or 0.0
+        local bx, by = turned(b.x, b.y, yaw)
+        return { netId = v.net, offset = vector3(v.offset[1] + bx, v.offset[2] + by, v.offset[3] + b.z),
+                 heading = (yaw + 180.0) % 360.0 }
+    end
+    local h = tonumber(v.rot and v.rot[3]) or 0.0
+    local bx, by = turned(b.x, b.y, h)
+    return { coords = vector3(v.coords[1] + bx, v.coords[2] + by, v.coords[3] + b.z), heading = (h + 180.0) % 360.0 }
+end
+
+--- What decides where its prompt is: put up again only when this changes (the rest is read live from `list`).
+local function whereKey(v)
+    if v.net then
+        return ('car %d %.2f %.2f %.2f %.1f'):format(v.net, v.offset[1], v.offset[2], v.offset[3],
+            tonumber(v.carRot and v.carRot[3]) or 0.0)
+    end
+    return ('at %.2f %.2f %.2f %.1f'):format(v.coords[1], v.coords[2], v.coords[3], tonumber(v.rot and v.rot[3]) or 0.0)
+end
+
+-- ---- The prompt behind it ------------------------------------------------------------------------
+
+local function send(id, what, value)
+    TriggerServerEvent('whip_voice:server:speaker', id, what, value or '')
+end
+
+local function actionFor(v)
+    local id = v.id
+    local function cur() return list[id] end
+    return {
+        id = 'speaker:' .. id,
+        group = GROUP,
+        at = anchorOf(v),
+        label = function()
+            local c = cur()
+            if c and c.playing then return 'Speaker  ·  ' .. (c.song or 'playing') end
+            return 'Speaker'
         end,
         icon = 'power',
         reach = 2.0,
-        canInteract = function(ctx) return speakerOf(ctx.entity) ~= nil end,
         options = {
             {
                 id = 'song', icon = 'pin',
-                label = function(ctx)
-                    local v = speakerOf(ctx.entity)
-                    return (v and v.song) and ('Song: ' .. v.song) or 'Song link'
+                label = function()
+                    local c = cur()
+                    return (c and c.song) and ('Song: ' .. c.song) or 'Song link'
                 end,
                 onSelect = function(ctx)
-                    local v = speakerOf(ctx.entity)
-                    if not v then return ctx.refuse('That speaker is gone') end
+                    if not cur() then return ctx.refuse('That speaker is gone') end
                     local links = S.links or { 'https://r2.fivemanage.com/' }
                     local answer = Whip.call('Input', 'Speaker', {
                         { label = 'Song link', type = 'text', required = true,
                           placeholder = tostring(links[1]) .. '.../song.mp3' },
                     })
                     if type(answer) ~= 'table' or type(answer[1]) ~= 'string' then return end
-                    TriggerServerEvent('whip_voice:server:speaker', v.id, 'link', answer[1])
+                    send(id, 'link', answer[1])
                 end,
             },
             {
                 id = 'play', icon = 'power',
-                label = function(ctx)
-                    local v = speakerOf(ctx.entity)
-                    return (v and v.playing) and 'Stop' or 'Play'
+                label = function()
+                    local c = cur()
+                    return (c and c.playing) and 'Stop' or 'Play'
                 end,
                 onSelect = function(ctx)
-                    local v = speakerOf(ctx.entity)
-                    if not v then return ctx.refuse('That speaker is gone') end
-                    if not v.playing and not v.song then return ctx.refuse('Give it a song first') end
-                    send(ctx, v.playing and 'stop' or 'play')
+                    local c = cur()
+                    if not c then return ctx.refuse('That speaker is gone') end
+                    if not c.playing and not c.song then return ctx.refuse('Give it a song first') end
+                    send(id, c.playing and 'stop' or 'play')
                 end,
             },
             {
                 id = 'volume', icon = 'talk',
                 label = function(ctx)
                     if ctx.typed then return 'Volume  ' .. ctx.typed .. ' %' end
-                    local v = speakerOf(ctx.entity)
-                    return 'Volume  ' .. tostring(v and v.volume or 100) .. ' %'
+                    local c = cur()
+                    return 'Volume  ' .. tostring(c and c.volume or 100) .. ' %'
                 end,
                 onSelect = function(ctx)
-                    ctx.beginInput({ max = 3, onSubmit = function(text) send(ctx, 'volume', text) end })
+                    ctx.beginInput({ max = 3, onSubmit = function(text) send(id, 'volume', text) end })
                 end,
             },
             {
                 id = 'range', icon = 'target',
                 label = function(ctx)
                     if ctx.typed then return 'Range  ' .. ctx.typed .. ' m' end
-                    local v = speakerOf(ctx.entity)
-                    return 'Range  ' .. tostring(v and v.range or 30) .. ' m'
+                    local c = cur()
+                    return 'Range  ' .. tostring(c and c.range or 30) .. ' m'
                 end,
                 onSelect = function(ctx)
-                    ctx.beginInput({ max = 3, onSubmit = function(text) send(ctx, 'range', text) end })
+                    ctx.beginInput({ max = 3, onSubmit = function(text) send(id, 'range', text) end })
                 end,
             },
             {
                 id = 'pickup', icon = 'pickup', label = 'Pick up', holdMs = 600,
-                onSelect = function(ctx) send(ctx, 'pickup') end,
+                onSelect = function() send(id, 'pickup') end,
             },
         },
-    })
-    if not ok then print('[whip_voice] the speaker prompt could not be added: ' .. tostring(why)) end
-    mounted = ok == true or ok ~= false
+    }
 end
 
 -- ---- What the server says ------------------------------------------------------------------------
 
+--- The speakers as they are now: a prompt put up for each new one (or one that moved to another car or spot), and
+--- taken down for each gone.
 local function take(views)
     local now = {}
     for _, v in ipairs(type(views) == 'table' and views or {}) do
         if type(v) == 'table' and v.id then now[v.id] = v end
     end
     list = now
-    -- The prompt is up only while there are speakers to use (one model action, offered on the speakers only).
-    if next(list) and not mounted then mount()
-    elseif not next(list) and mounted then
-        Whip.call('RemoveAction', SPEAKER_KEY)
-        mounted = false
+    for id, key in pairs(mounted) do
+        if not now[id] then
+            Whip.call('RemoveAction', 'speaker:' .. id)
+            mounted[id] = nil
+        end
+    end
+    for id, v in pairs(now) do
+        local key = whereKey(v)
+        if mounted[id] ~= key then
+            local ok, why = Whip.call('AddAction', actionFor(v))
+            if ok then mounted[id] = key
+            else print(('[whip_voice] speaker %d\'s prompt could not be put up: %s'):format(id, tostring(why))) end
+        end
     end
 end
 
 RegisterNetEvent('whip_voice:client:speakers', take)
 
--- A game just started (or whip_voice / whip_core did): every speaker, and the prompt again (whip_core's actions went
--- with it if it restarted).
+-- A game just started (or whip_voice / whip_core did): every speaker, and their prompts again (whip_core's actions
+-- went with it if it restarted).
 Whip.register(function()
-    mounted = false
+    mounted = {}
     CreateThread(function()
         local views = Whip.call('Callback', 'whip_voice:speakers')
         if type(views) == 'table' then take(views) end
