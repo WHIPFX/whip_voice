@@ -112,8 +112,8 @@ work without whip_voice (a server may run another voice system).
 
 ## Voice bots: a recording on a line
 
-Only when the server set up the voice bot (the setup wizard's
-step; `/voicecheck` says). A voice bot is a recording heard on one of your lines as if someone on it were talking:
+Requires the voice bot, which the built-in voice server sets up (`/voicecheck` shows whether it runs). A voice bot is
+a recording heard on one of your lines as if someone on it were talking:
 whip_phone's Phone Call card is one, a lore character phoning a player. To the players' games it is one more voice on
 the line, so the line's recipe, a device on speaker and the people near it work as for anyone. It only talks: it never
 hears the line, and nobody near anyone hears it except through a member's device.
@@ -130,8 +130,43 @@ hears the line, and nobody near anyone hears it except through a member's device
 - A bot is yours: only your resource can use it, and it goes when your resource stops (no `onDone` then).
 - When it finishes it leaves the line, and a line with too few members closes. `onDone` and that `onEnd` are told
   at the same moment, in no set order: wait a moment in `onEnd` if you need to tell the two apart.
-- At most `maxCalls` bots at once (30, the bot's `config.json`). Past it, `CreateVoiceBot` waits up to
-  `Config.VoiceBot.WaitSeconds` (5) for one to free, then answers `false, 'every voice bot line is in use'`.
+- At most 30 bots run at once (`Config.VoiceBot.maxCalls`), world voices included. Past that, `CreateVoiceBot` waits
+  up to `Config.VoiceBot.WaitSeconds` (5) for a free one, then returns `false, 'every voice bot line is in use'`.
+- If the voice server or the voice bot restarts, every bot is removed and its `onDone` receives `'failed'`. When
+  whip_voice itself restarts, bots are removed without `onDone`.
+
+## World voices
+
+A world voice plays recordings from an entity, usually an NPC, and is heard like a player's voice: from the entity's
+head, within its range. It only talks. The Director's lore characters use it.
+
+| Export | Returns | Description |
+|---|---|---|
+| `CreateWorldVoice({ name, at = { netId }, range })` | `key` | Creates a voice at an entity. `range` is 2–300 m, default 12. WAITS. |
+| `PlayWorldVoice(key, audio, onDone)` | `durationMs` | Plays a recording (`audio` as in `CreateVoiceBot`), cutting off one already playing. WAITS while it loads. |
+| `MoveWorldVoice(key, { netId })` | `true` | Moves it to another entity, keeping its settings. |
+| `SetWorldVoiceRange(key, range, fullWithin)` | `true` | Sets how far it carries (2–300 m) and how far it stays at full volume. |
+| `SetWorldVoiceMegaphone(key, on)` | `true` | Raises or lowers a megaphone, as the megaphone item does. |
+| `SetWorldVoiceRadio(key, frequency)` | `true` | Puts it on a radio frequency (100–999), or takes it off with `false`. |
+| `RemoveWorldVoice(key)` | `true` | Removes it. |
+
+Each returns `false, reason` on failure. `onDone(key, reason)` receives `'done'`, `'cut'`, `'removed'` or `'failed'`.
+
+- The voice is silent, on the radio too, while its entity doesn't exist on the server. After respawning the NPC, call
+  `MoveWorldVoice`.
+- On a frequency it is heard like a player's radio: by players on that frequency in its routing bucket, fading with
+  distance.
+- It belongs to the resource that created it and is removed when that resource stops.
+
+```lua
+-- A dispatcher heard at the desk and on radio channel 100. These exports wait, so call them in a thread.
+CreateThread(function()
+    local voice = Whip.voice('CreateWorldVoice', { name = 'Dispatch', at = { netId = NetworkGetNetworkIdFromEntity(ped) }, range = 8 })
+    if not voice then return end
+    Whip.voice('SetWorldVoiceRadio', voice, 100)
+    Whip.voice('PlayWorldVoice', voice, '@my_story/audio/all_units.ogg')
+end)
+```
 
 ## Recipes: sound as data
 
