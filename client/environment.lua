@@ -299,8 +299,11 @@ local function lineOf(id, from, to, own, range, pass)
     -- 1. The way found before: while the voice is where it was, the listener near where it was found and still seeing
     -- it, and it does not bend back on itself (else it is looked for again below; one that does stands only while
     -- nothing better is found).
+    -- (A way close round something is looked at again rather than followed: a few rays, and it is wherever the
+    -- listener now stands that decides it. Followed, a way found over the top of a van stood while they walked on to
+    -- where its end was the way, heard as bending up and over by 48 degrees: the voice simulator, 14 Nov 2026.)
     local sharp = nil
-    if r.way and not far(r.wayTo, to, STILL) and not far(r.wayFrom, from, KEEP_MOVE) then
+    if r.way and not r.way.close and not far(r.wayTo, to, STILL) and not far(r.wayFrom, from, KEEP_MOVE) then
         local f = Ways.follow(r.way, from, to, own, closeRays)
         if f == nil then return answer(lastHere() or true, false) end   -- (no rays left this pass)
         if f then
@@ -318,7 +321,7 @@ local function lineOf(id, from, to, own, range, pass)
     if pos then w = wayRound(from, to, pos, own) end
     if w == nil and pos then return answer(sharp or lastHere() or true, false) end   -- (no rays left this pass)
     if w then
-        r.way, r.wayTo, r.wayFrom = { pts = { w, to } }, to, from
+        r.way, r.wayTo, r.wayFrom = { pts = { w, to }, close = true }, to, from
         local f = Ways.follow(r.way, from, to, own, closeRays)
         if f then return answer(f, true) end
         r.way = nil
