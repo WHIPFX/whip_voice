@@ -96,7 +96,8 @@ Config.Radio = {
 -- rides the car (the mouse wheel turns it, the arrow keys raise and lower it). Behind it: Song link
 -- (paste the song's link), Play / Stop, Volume, Range, Pick up. Everyone near hears it, as music:
 -- from far off it comes late and loses its treble, and on a passing car it rises and falls in pitch.
--- Its song, volume and range stay with the item when it is picked up.
+-- Its song, volume and range stay with the item when it is picked up. A server restart gives every
+-- speaker that was out back to whoever put it down (their pockets, or at their feet if full).
 Config.Speaker = {
     model        = 'ba_prop_battle_club_speaker_small',   -- what it looks like
     links        = { 'https://r2.fivemanage.com/' },       -- the only links it plays: where your songs are uploaded

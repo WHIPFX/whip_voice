@@ -15,10 +15,10 @@
 -- What it looks like: a prop set (whip_core ShowPropSet), each game's own copy, attached to the car for one on a car.
 -- Its song, volume and range go with the item (its metadata): picked up and put down again, it is as it was.
 --
--- KEPT ACROSS RESTARTS (this resource's KVP): one on the ground comes back where it was (not playing); one on a car
--- comes back as a speaker on the ground where the car last was (the car may be gone by then), as one does whose car
--- goes (deleted, put away). The item is never lost: it leaves the pockets (saved) before the speaker is kept, and
--- the speaker is let go of before the item is given back.
+-- A RESTART GIVES THEM BACK (this resource's KVP keeps what is out): every speaker out goes back to whoever put it
+-- down, as the item with its song, volume and range, now or at their next login (restore, below). One whose car goes
+-- (deleted, put away) is put down as an item where the car last was. The item is never lost or doubled: it leaves the
+-- pockets (saved) before the speaker is kept, and the speaker is let go of before the item is given back.
 
 Speakers = { byId = {} }
 
@@ -390,34 +390,47 @@ end
 
 local restored = false
 
---- Once a start: the speakers kept from before. On the ground: back where they were (not playing). On a car: an item
---- on the ground where the car last was.
+--- Once a start: the speakers that were out go BACK TO WHOEVER PUT THEM DOWN (Josh, 14 Nov 2026), on the ground or on a
+--- car, with their song, volume and range: into their pockets now if they are on, else at their next login (whip's
+--- GiveOnLogin, which puts it at their feet when their pockets are full). One whose owner whip cannot find is put down
+--- as an item where it was. Each is crossed off the kept list before it is given, so a stop in the middle can never
+--- give one twice.
 local function restore()
     if restored then return end
     restored = true
     local raw = GetResourceKvpString(KVP)
     local ok, list = pcall(json.decode, raw or '[]')
     if not ok or type(list) ~= 'table' then return end
-    local dropped = 0
+    local back, dropped = 0, 0
+    local left = {}
+    for i, r in ipairs(list) do left[i] = r end
     for _, r in ipairs(list) do
+        table.remove(left, 1)
+        SetResourceKvp(KVP, json.encode(left))
         if type(r) == 'table' and type(r.coords) == 'table' then
-            nextId = nextId + 1
-            local s = { id = nextId, model = type(r.model) == 'string' and r.model or MODEL, coords = r.coords,
-                        rot = type(r.rot) == 'table' and r.rot or { 0, 0, 0 }, lastAt = r.last or r.coords,
-                        link = Speakers.linkProblem(r.link) == nil and r.link or nil, volume = volumeOf(r.volume),
-                        range = rangeOf(r.range), owner = r.owner, bucket = math.tointeger(tonumber(r.bucket)) or 0,
-                        playing = false }
-            if r.onCar then
-                dropAt(s, s.lastAt, 'its car went with a restart')
-                dropped = dropped + 1
+            local s = { link = Speakers.linkProblem(r.link) == nil and r.link or nil, volume = volumeOf(r.volume),
+                        range = rangeOf(r.range) }
+            local owner = math.tointeger(tonumber(r.owner))
+            local given, why = false, 'no owner'
+            if owner then
+                local okG, g, w = pcall(function()
+                    return core:GiveOnLogin({ charId = owner }, 'speaker', 1,
+                        { speakerLink = s.link, speakerVolume = s.volume, speakerRange = s.range },
+                        'their speaker, back after a restart')
+                end)
+                given, why = okG and g, okG and w or g
+            end
+            if given then
+                back = back + 1
             else
-                Speakers.byId[s.id] = s
+                say('speaker of character %s could not go back to them (%s): put down where it was', tostring(owner), tostring(why))
+                dropAt(s, type(r.last) == 'table' and r.last or r.coords, 'its owner could not be found after a restart')
+                dropped = dropped + 1
             end
         end
     end
     save()
-    local n = total()
-    if n > 0 or dropped > 0 then say('%d speaker(s) back where they were; %d from cars put down as items', n, dropped) end
+    if back > 0 or dropped > 0 then say('%d speaker(s) back to their owners; %d put down as items', back, dropped) end
 end
 
 -- ============================================
