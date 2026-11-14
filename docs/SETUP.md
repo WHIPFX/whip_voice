@@ -168,8 +168,10 @@ running Windows. Rented FiveM hosting that only gives you a control panel can't 
 program that has to be installed on the machine.
 
 That's all. Players' games connect to your server's own address, with a free certificate for that address that the
-wizard sets up, so you need no domain name. The wizard downloads and sets up everything else (the voice server,
-LiveKit, and the HTTPS front door, Caddy), and checks every download is the genuine file.
+wizard sets up, so you need no domain name. The wizard downloads and sets up everything else: the voice server
+(LiveKit), the HTTPS front door (Caddy), NSSM (which runs them as Windows services), and Node.js and the packages
+for the voice bot. It checks each download against a checksum written into whip_voice, and uses none that doesn't
+match.
 
 ### The setup, step by step
 
