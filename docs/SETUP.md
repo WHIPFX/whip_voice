@@ -16,7 +16,7 @@ LiveKit, and the HTTPS front door, Caddy), and checks every download is the genu
 
 ## The setup, step by step
 
-1. On the server machine, open your resources folder, then `whip_voice\service` (inside `[whip]` if whip is there).
+1. On the server machine, open your resources folder, then `whip_voice\service` (inside a `[whip]` folder if your resources have one).
 2. Double-click **`Setup voice server.bat`**. Windows asks whether to let it make changes: say **Yes**.
 3. Let it run. There is nothing to answer; it says what it does at each step:
 
@@ -55,8 +55,8 @@ LiveKit, and the HTTPS front door, Caddy), and checks every download is the genu
 
    **server.cfg.** It writes whip_voice's lines into the server.cfg of your server (the one in the folder above
    `resources`) and keeps the old file beside it as a backup. The lines are the voice address, the key, the secret
-   and the voice bot's token, and they go before the line that starts whip_voice (`ensure [whip]` or
-   `ensure whip_voice`). Older `whip_voice_...` lines are replaced, and `setr sv_mumble true` is turned off:
+   and the voice bot's token, and they go before the line that starts whip_voice (`ensure whip_voice`, or
+   the `ensure` of a folder it is in). Older `whip_voice_...` lines are replaced, and `setr sv_mumble true` is turned off:
    whip_voice doesn't use it, and on, any player's game can listen to any Mumble channel. When there is no
    server.cfg above `resources`, it prints the lines and puts them on your clipboard instead: paste them into your
    server.cfg after `ensure whip_core`, with `ensure whip_voice` under them.
