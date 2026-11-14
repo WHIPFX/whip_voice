@@ -9,10 +9,15 @@ licences.
 
 Third-party parts in this resource:
 
-- three.js (threejs.org) with its GLTFLoader and OrbitControls, MIT: the licence is at the top of each of its files.
-- The LiveKit JavaScript client (`html/js/vendor/livekit-client.umd.js`), Apache 2.0.
+- three.js (threejs.org) with its GLTFLoader, OrbitControls, RoomEnvironment and BufferGeometryUtils, in
+  `html/radio3d/lib/`, MIT: `html/radio3d/lib/LICENSE`.
+- The LiveKit JavaScript client 2.22.3 (`html/js/vendor/livekit-client.umd.js`), Apache 2.0:
+  `html/js/vendor/livekit-client.LICENSE.txt`, with the notices of everything built into it in
+  `html/js/vendor/livekit-client.NOTICE.txt`.
 - Downloaded when the server first starts, not shipped here: the LiveKit server (Apache 2.0) and Node.js (MIT, with
   the licences of its own parts in its download).
+- Installed by the setup wizard, not shipped here: the voice bot's npm packages (`service/voicebot/package-lock.json`),
+  each under its own licence: MIT, Apache 2.0, BSD, ISC, and the LGPL 3.0 for codec-parser.
 
 whip_core's `NOTICE.md` is the full notice for WHIP: the WHIP name and logo, the Rockstar Games material, and every
 third-party part, each with its licence.
