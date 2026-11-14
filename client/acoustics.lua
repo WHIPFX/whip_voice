@@ -3,8 +3,9 @@
 --
 -- Like GTA, a voice takes the cheapest way through the map's rooms and doorways (portals) from the speaker's room to
 -- the listener's, and every doorway, closed door or window on the way muffles it. It is heard from the doorway it came
--- out of, not through the wall. Where the map knows no rooms, a line-of-sight check decides: a wall between two heads
--- muffles.
+-- out of, not through the wall. Where the map knows no rooms, a line-of-sight check decides: something between two heads
+-- muffles a little when the sound can go round or over it close by (a low wall, a crate), by how far round; as a wall
+-- when there is no way round.
 --
 -- The answer for one voice:
 --   g    dB added (0 = untouched, negative = quieter)
@@ -23,6 +24,8 @@ Acoustics.COST = {
     door     = { db = 12, hz = 900  },   -- a closed door
     window   = { db = 12, hz = 1100 },   -- a window: as muffled as a closed door, a little brighter (glass)
     wall     = { db = 14, hz = 800  },   -- a wall with no known way round (line of sight blocked)
+    around   = { db = 4,  hz = 5000 },   -- outdoors, something in the way with a way round it close by: the least it
+                                         -- takes off; the further round, the more (Acoustics.around)
     building = { db = 22, hz = 450  },   -- inside a building the map knows nothing about, you outside
     car      = { db = 9,  hz = 1300 },   -- one of you in a closed car
     cars     = { db = 16, hz = 850  },   -- each in a different closed car
@@ -397,12 +400,25 @@ function Acoustics.through(L, S, interiors, doorOpen, slope, keep, pass)
     return out
 end
 
+--- Outdoors, round something or over it: the cost of a way round that adds `extra` metres to the straight line. A step
+--- round a low wall takes off COST.around and a little treble; the further round, the more of both, never as much as a
+--- wall with no way round.
+function Acoustics.around(extra)
+    local C = Acoustics.COST
+    local e = math.max(0, tonumber(extra) or 0)
+    return {
+        db = math.max(0, math.min(C.around.db + 2 * e, C.wall.db - 2)),
+        hz = math.max(C.wall.hz * 1.5, C.around.hz / (1 + 0.6 * e)),
+    }
+end
+
 --- How one speaker sounds to one listener.
 ---@param L table   { int, room, pos = {x,y,z}, veh, cabin (closed car), water }
 ---@param S table   the same, for the speaker, and `loud` while they speak through a megaphone
 ---@param interiors table  [int] = { pos, rot, conv, rooms = {[i] = {box}}, portals = {{from, to, kind, center}} }
 ---@param doorOpen fun(p: table): boolean|nil
----@param blocked boolean|nil  line of sight between the two heads is blocked (outdoors / unknown rooms)
+---@param blocked boolean|number|nil  line of sight between the two heads is blocked (outdoors / unknown rooms); a
+---                         number: blocked, with a way round adding that many metres
 ---@param slope number|nil  dB per metre of the speaker's fade (Acoustics.slope), for choosing openings
 ---@param keep table|nil  the opening this voice came through last time (the answer's `via`)
 ---@param pass table|nil  shared by every voice of one update, so the search is done once (see through)
@@ -452,8 +468,11 @@ function Acoustics.voice(L, S, interiors, doorOpen, blocked, slope, keep, pass)
         if out then addRoute(m, out) else add(m, Acoustics.COST.building, 'their building') end
         if inn then addRoute(m, inn); at = portalAt(LI, inn.portals[1])
         else add(m, Acoustics.COST.building, 'your building') end
+    elseif type(blocked) == 'number' then
+        -- Both outside, something between the two heads with a way round it (`blocked`: the metres round).
+        add(m, Acoustics.around(blocked), ('round it, +%.1f m'):format(blocked))
     elseif blocked then
-        -- Both outside, something solid between the two heads.
+        -- Both outside, something solid between the two heads, no way round.
         add(m, Acoustics.COST.wall, 'wall')
     end
     if at and not p then p = dist(S.pos, at) + dist(at, L.pos) end

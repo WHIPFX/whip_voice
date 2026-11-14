@@ -111,7 +111,9 @@ Config.Muffle = {
     doorway = 3,    -- an open doorway or open door
     door    = 12,   -- a closed door
     window  = 12,   -- a window (the glass lets a little more treble through than a door)
-    wall    = 14,   -- a wall or building in the way outdoors
+    wall    = 14,   -- a wall or building in the way outdoors, with no way round it
+    around  = 4,    -- something in the way outdoors with a way round or over it close by (a low wall, a crate):
+                    -- this much for a step round it, more the further round (never as much as a wall)
     car     = 9,    -- a closed car's body
 }
 

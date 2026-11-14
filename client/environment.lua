@@ -162,16 +162,92 @@ local function probe(from, to, flags)
     return true, isHit(hit), pos, ent
 end
 
---- Line of sight between two heads: the world and objects (1 + 16), not people or cars. No answer
---- from the game keeps the last one.
+--- Is a ray clear? Answered, and nothing hit, or only the voice's own object.
 ---
 --- THE VOICE'S OWN OBJECT IS NOT IN THE WAY. A speaker's sound comes from the middle of its prop, so the ray ends inside
 --- it and always hits it first: every speaker heard outdoors was muffled as if behind a wall (Josh, 14 Nov 2026). Its
 --- own object hit first means nothing stood between.
-local function blocked(id, from, to, own)
-    local answered, hit, _, ent = probe(from, to, 1 + 16)
-    if answered then probes[id] = hit and not (own and own ~= 0 and ent == own) end
-    return probes[id] == true
+local function clearRay(answered, hit, ent, own)
+    return answered and (not hit or (own ~= nil and own ~= 0 and ent == own))
+end
+
+local function far(a, b, metres)
+    local dx, dy, dz = a[1] - b[1], a[2] - b[2], a[3] - b[3]
+    return dx * dx + dy * dy + dz * dz > metres * metres
+end
+
+local function length(a, b)
+    local dx, dy, dz = a[1] - b[1], a[2] - b[2], a[3] - b[3]
+    return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+-- THE WAY ROUND. Outdoors, one ray between two heads used to decide it, and anything touching that line muffled the
+-- voice as a building's wall does: a low wall in an open car park, a crate, a fence, as if behind closed doors (Josh,
+-- 14 Nov 2026). Sound goes round and over things. So a line that hits something looks for a way round where it hit:
+-- beside it either side and over it, near first. Found, the voice is muffled by how far round it must go
+-- (Acoustics.around); none within reach, a wall as before.
+local ROUND_STEPS = { 1.0, 2.5, 5.0 }   -- metres out from where the line hit, nearest first
+local ROUND_KEEP_MS = 2000              -- a way round, once looked for, is kept this long...
+local ROUND_MOVE = 0.75                 -- ...while neither end moves further than this (metres)
+local ROUND_RAYS = 36                   -- rays a pass may spend looking for ways round (two whole looks)
+local rounds = {}                       -- [identity] = { at, from, to, extra = metres added, or true (no way round) }
+local raysLeft = ROUND_RAYS
+
+--- The way round from `from` to `to`, past `hitAt` (where the straight line hit): the metres it adds to the straight
+--- line, false when there is none within reach, nil when this pass has no rays left to look.
+local function wayRound(from, to, hitAt, own)
+    local dx, dy, dz = to[1] - from[1], to[2] - from[2], to[3] - from[3]
+    local d = math.sqrt(dx * dx + dy * dy + dz * dz)
+    if d < 0.01 then return false end
+    local ux, uy, uz = dx / d, dy / d, dz / d
+    -- Sideways: level, square to the line (a line straight up or down: any level way).
+    local flat = math.sqrt(ux * ux + uy * uy)
+    local sx, sy = 1.0, 0.0
+    if flat > 0.01 then sx, sy = -uy / flat, ux / flat end
+    -- From just in front of what it hit, on this side.
+    local bx, by, bz = hitAt.x - ux * 0.25, hitAt.y - uy * 0.25, hitAt.z - uz * 0.25
+    for _, step in ipairs(ROUND_STEPS) do
+        for side = 1, 3 do
+            if raysLeft < 2 then return nil end
+            local w
+            if side == 1 then w = { bx + sx * step, by + sy * step, bz }
+            elseif side == 2 then w = { bx - sx * step, by - sy * step, bz }
+            else w = { bx, by, bz + step } end
+            raysLeft = raysLeft - 1
+            local a1, h1, _, e1 = probe(from, w, 1 + 16)
+            if clearRay(a1, h1, e1, own) then
+                raysLeft = raysLeft - 1
+                local a2, h2, _, e2 = probe(w, to, 1 + 16)
+                if clearRay(a2, h2, e2, own) then return length(from, w) + length(w, to) - d end
+            end
+        end
+    end
+    return false
+end
+
+--- Line of sight between two heads: the world and objects (1 + 16), not people or cars. false: clear. A number: the
+--- line is blocked but there is a way round, adding that many metres. true: blocked, no way round. No answer from the
+--- game keeps the last one.
+local function lineOf(id, from, to, own)
+    local answered, hit, pos, ent = probe(from, to, 1 + 16)
+    if not answered then return probes[id] or false end
+    if clearRay(answered, hit, ent, own) then
+        probes[id] = false
+        return false
+    end
+    local r = rounds[id]
+    local now = GetGameTimer()
+    if not (r and now - r.at < ROUND_KEEP_MS and not far(r.from, from, ROUND_MOVE) and not far(r.to, to, ROUND_MOVE)) then
+        local extra = nil
+        if pos then extra = wayRound(from, to, pos, own) end
+        -- (nil: no rays left this pass; the last answer stands, or a wall until the next pass looks.)
+        if extra ~= nil then
+            r = { at = now, from = from, to = to, extra = extra or true }
+            rounds[id] = r
+        end
+    end
+    probes[id] = r and r.extra or true
+    return probes[id]
 end
 
 local function learn(d)
@@ -198,6 +274,7 @@ function Environment.update(me, speakers, heard)
     local out = { rv = nil, v = {} }
     if E.echo ~= false and not L.water then out.rv = Acoustics.reverbFor(interiors[L.int] or nil, L.room) end
     local pass = {}   -- shared by every voice below: the way-finding search is done once (acoustics.lua)
+    raysLeft = ROUND_RAYS
 
     for id, s in pairs(speakers) do
         local S = describe(s.ped, s.head)
@@ -208,7 +285,7 @@ function Environment.update(me, speakers, heard)
         local mapped = (L.int ~= 0 or S.int ~= 0)
             and (L.int == 0 or interiors[L.int]) and (S.int == 0 or interiors[S.int])
         local isBlocked = false
-        if E.walls ~= false and not mapped then isBlocked = blocked(id, me.head, s.head, s.ped) end
+        if E.walls ~= false and not mapped then isBlocked = lineOf(id, me.head, s.head, s.ped) end
         local ints = {}
         if L.int ~= 0 then ints[L.int] = interiors[L.int] or nil end
         if S.int ~= 0 then ints[S.int] = interiors[S.int] or nil end
@@ -216,6 +293,7 @@ function Environment.update(me, speakers, heard)
         out.v[id], via[id] = a, a.via
     end
     for id in pairs(probes) do if not heard[id] then probes[id] = nil end end
+    for id in pairs(rounds) do if not heard[id] then rounds[id] = nil end end
     for id in pairs(via) do if not heard[id] then via[id] = nil end end
     return out
 end
