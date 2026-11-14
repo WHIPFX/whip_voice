@@ -171,7 +171,10 @@ A world voice made with `music = true` is heard as sound from far off is, which 
 it arrives late by its distance at the speed of sound, so as it comes closer or goes away it plays a little faster
 and higher, or slower and lower (the Doppler effect, by the speed itself: a car passing at 110 km/h about a semitone
 and a half); the air takes its treble with distance while its bass carries; and outdoors, the further off it is, the
-more of what you hear is its echo off everything around. The Director's speakers and the speaker item are music.
+more of what you hear is its echo off everything around. Round a corner outdoors it is heard by two ways at once, the
+best way round and the best through another opening, each from its own corner and as loud as its own length and bends
+make it: walking past a row of alleys, one fades up as the other fades down, and where it seems to come from slides to
+a new corner rather than jumping. The Director's speakers and the speaker item are music.
 
 `opts` for `PlayWorldVoice`: `loop = true` plays it over and over until `StopWorldVoice`; `music = true` lets it be a
 song, up to the voice bot's `musicSeconds` and `musicBytes` (10 minutes and 40 MB unless its config.json says
