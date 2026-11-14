@@ -190,14 +190,14 @@ async function unpack(archive, dir) {
     if (r.code !== 0) throw new Error(`could not unpack ${path.basename(archive)}: ${r.out.trim().slice(-300)}`);
 }
 
-/** The full path of a running process's program, or null. */
+/** The full path of a running process's program, or null. Asked of a program on both systems: FXServer lets a
+ *  resource's JavaScript read only its own files, so /proc is refused to fs ("no device found", seen on Linux). */
 async function programOf(pid) {
-    if (WIN) {
-        const r = await run(path.join(SYSTEM32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-            ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).Path`]);
-        return r.out.trim() || null;
-    }
-    try { return await fsp.readlink(`/proc/${pid}/exe`); } catch (_) { return null; }
+    const r = WIN
+        ? await run(path.join(SYSTEM32, 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+            ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).Path`])
+        : await run('readlink', [`/proc/${pid}/exe`]);
+    return (r.code === 0 && r.out.trim()) || null;
 }
 
 function alive(pid) {
@@ -205,12 +205,15 @@ function alive(pid) {
 }
 
 /** A program of ours an earlier start left running (the FiveM server was killed, not stopped): stopped, so its ports
- *  and files are free. Only when the pid file's process really is that program. */
+ *  and files are free. Only when the pid file's process really is that program. On Linux one does outlive a killed
+ *  FXServer (adopted by init, its ports held), as a txAdmin restart after a crash meets it. */
 async function stopLeftover(pidFile, program) {
     const pid = parseInt(readText(pidFile), 10);
     if (pid > 0 && alive(pid)) {
         const p = await programOf(pid);
-        if (p && path.resolve(p).toLowerCase() === path.resolve(program).toLowerCase()) {
+        // Not known which program it is: the pid file stays, for the next try (never a guess at killing).
+        if (!p) return;
+        if (path.resolve(p).toLowerCase() === path.resolve(program).toLowerCase()) {
             try { process.kill(pid); } catch (_) { /* gone */ }
             for (let i = 0; i < 25 && alive(pid); i++) await sleep(200);
             say(`stopped ${path.basename(program)} left running by an earlier start (pid ${pid})`);
