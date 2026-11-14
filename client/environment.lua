@@ -199,7 +199,14 @@ local CLOSE_RAYS = 48                   -- rays a pass may spend following ways 
 local SEARCH_RAYS = 64                  -- rays a pass may spend on the one search further round
 local SEARCH_SQUARES = 120              -- squares a pass's search may look at (client/ways.lua)
 local SEARCH_FROM = 3.0                 -- a search going on is started again when the listener has moved this far
-local rounds = {}                       -- [identity] = { way, wayTo, search, last, lastFrom, lastTo, settled }
+-- A KEPT WAY IS ONLY FOR NEAR WHERE IT WAS FOUND. Followed for as long as its corner could be seen, it was kept from
+-- the far side of the voice: walk past a gap and back, and the sound still went out to the corner left behind and
+-- back again (152 degrees, from the wrong side), flicking to clear and back each time the straight line grazed a post
+-- (Josh, 14 Nov 2026). So it is forgotten once the voice is in sight, followed only within KEEP_MOVE of where it was
+-- found, and never when it bends back on itself (SHARP): past those it is looked for again from where the listener is.
+local KEEP_MOVE = 5.0                   -- metres from where a way was found that it is still followed
+local SHARP = 120                       -- degrees of bend past which a followed way is looked for again
+local rounds = {}                       -- [identity] = { way, wayTo, wayFrom, search, last, lastFrom, lastTo, settled }
 local closeRays = { left = CLOSE_RAYS }
 
 Ways.setProbe(probe)
@@ -253,6 +260,9 @@ local function lineOf(id, from, to, own, range, pass)
     if not answered then return probes[id] or false end
     if clearRay(answered, hit, ent, own) then
         probes[id] = false
+        -- In sight: the way kept from before is done with. Out of sight again, it is looked for from there.
+        local was = rounds[id]
+        if was then was.way, was.settled = nil, false end
         return false
     end
     local r = rounds[id]
@@ -270,19 +280,27 @@ local function lineOf(id, from, to, own, range, pass)
         probes[id] = r.last
         return r.last
     end
-    -- 1. The way found before, while the voice is where it was and the listener still sees the way.
-    if r.way and not far(r.wayTo, to, STILL) then
+    -- 1. The way found before: while the voice is where it was, the listener near where it was found and still seeing
+    -- it, and it does not bend back on itself (else it is looked for again below; one that does stands only while
+    -- nothing better is found).
+    local sharp = nil
+    if r.way and not far(r.wayTo, to, STILL) and not far(r.wayFrom, from, KEEP_MOVE) then
         local f = Ways.follow(r.way, from, to, own, closeRays)
-        if f then return answer(f, true) end
         if f == nil then return answer(r.last or true, false) end   -- (no rays left this pass)
+        if f then
+            local bend = 0
+            for _, t in ipairs(f.turns) do bend = bend + t end
+            if bend <= SHARP then return answer(f, true) end
+            sharp = f
+        end
     end
     r.way = nil
     -- 2. Close round what the line hit.
     local w = nil
     if pos then w = wayRound(from, to, pos, own) end
-    if w == nil and pos then return answer(r.last or true, false) end   -- (no rays left this pass)
+    if w == nil and pos then return answer(sharp or r.last or true, false) end   -- (no rays left this pass)
     if w then
-        r.way, r.wayTo = { anchor = w, toward = to }, to
+        r.way, r.wayTo, r.wayFrom = { anchor = w, toward = to }, to, from
         local f = Ways.follow(r.way, from, to, own, closeRays)
         if f then return answer(f, true) end
         r.way = nil
@@ -296,13 +314,13 @@ local function lineOf(id, from, to, own, range, pass)
         if found ~= nil then
             r.search = nil
             if not found then return answer(true, true) end          -- no way round within reach: the wall
-            r.way, r.wayTo = found, to
+            r.way, r.wayTo, r.wayFrom = found, to, from
             local f = Ways.follow(found, from, to, own, pass.search)
             if f then return answer(f, true) end
             if f == false then r.way = nil end
         end
     end
-    return answer(r.last or true, false)
+    return answer(sharp or r.last or true, false)
 end
 
 local function learn(d)
