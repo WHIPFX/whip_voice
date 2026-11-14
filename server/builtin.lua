@@ -4,15 +4,14 @@
 --
 -- With no whip_voice_url in server.cfg, whip_voice runs its own voice server on this machine: server/builtin.js
 -- downloads LiveKit, starts it with new random keys every start, and carries players' signalling to it (their games
--- only open secure connections, which is what needed a certificate). This file starts it, keeps how it stands, and
--- takes the relay's messages from players' games.
+-- only open secure connections, which is what needed a certificate). This file starts it and keeps how it stands.
 --
 --   VoiceBuiltin.on                  true when the built-in voice server is the one (no whip_voice_url)
 --   VoiceBuiltin.state               how it stands (server/builtin.js): phase, why, key, secret, api, udp, tcp, bot...
 --   VoiceBuiltin.ready()             LiveKit is running and answering
 --   VoiceBuiltin.why()               while not ready: why, in words
 --   VoiceBuiltin.whenReady(fn)       fn() each time LiveKit (re)starts and answers (a fresh voice room each time)
---   VoiceBuiltin.register(core)      from Whip.register, once whip_voice is the voice system: the relay's event, and start
+--   VoiceBuiltin.start()             from Whip.register, once whip_voice is the voice system: starts it (server/builtin.js)
 --
 -- The keys come by local event from server/builtin.js: any resource on this server could read server.cfg's keys too,
 -- and no player's game ever sees them.
@@ -112,30 +111,13 @@ function VoiceBuiltin.botWhy()
     return 'the voice bot is not running: ' .. tostring(b.why or b.phase)
 end
 
--- ---- Starting it, and the relay ----------------------------------------------------------------
+-- ---- Starting it ------------------------------------------------------------------------------
+--
+-- (The relay's messages from players' games go straight to server/builtin.js: bytes for the voice server, which checks
+-- them itself. Why that is no SecureEvent: there.)
 
--- A piece of signalling is cut to this many characters (server/builtin.js and html/js/relay.js cut at the same).
-local CHUNK = 12000
-
-function VoiceBuiltin.register(core)
+function VoiceBuiltin.start()
     if not VoiceBuiltin.on then return end
-
-    -- A player's game passing one piece of its signalling to the voice server (html/js/relay.js). Not tied to a loaded
-    -- character: the voice connection stays up at the character screen, and it must keep answering the voice
-    -- server's pings there. The voice server itself checks every connection's token, which only a loaded player gets
-    -- (whip_voice:token). Busy only while joining and as voices come and go nearby, so the limit is generous.
-    core:SecureEvent('whip_voice:server:sig', {
-        rateLimit = 20, burst = 200, whileDead = true, requirePlayer = false, sheet = 'light',
-        params = {
-            {'sock', 'id', 1, 2147483647},
-            {'op', 'enum', { 'open', 'more', 'data', 'close' }},
-            {'data', 'string', CHUNK, ''},
-            {'seq', 'id', 1, 2147483647},      -- each piece one up from the last on its connection: none may be lost
-        },
-    }, function(source, _, sock, op, data, seq)
-        TriggerEvent('whip_voice:relay:fromGame', source, sock, op, data, seq)
-    end)
-
     -- The voice bot's settings (config.lua) go with the start: server/builtin.js writes them into the bot's config.
     local b = Config.VoiceBot or {}
     TriggerEvent('whip_voice:builtin:start', {

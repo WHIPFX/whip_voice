@@ -9,9 +9,9 @@
 //      keys go to the Lua side by event and are never written to disk.
 //   2. THE SIGNALLING RELAY. A player's game only opens SECURE connections (wss://, a certificate), and a certificate
 //      is what made a voice server hard to set up. So players' games never connect to LiveKit's signalling port: the
-//      voice page (html/js/relay.js) hands each signalling message to the game, the game to this server
-//      (server/builtin.lua, a SecureEvent), and this file passes it to LiveKit on 127.0.0.1, and the answers back the
-//      same way. Only the AUDIO goes from each game to LiveKit directly, over UDP 7882-7893 (TCP 7881 when UDP is
+//      voice page (html/js/relay.js) hands each signalling message to the game, the game to this server (a server
+//      event this file takes and checks itself: the relay, below), and this file passes it to LiveKit on 127.0.0.1, and
+//      the answers back the same way. Only the AUDIO goes from each game to LiveKit directly, over UDP 7882-7893 (TCP 7881 when UDP is
 //      blocked): those are the ports to open, like 30120.
 //   3. THE VOICE BOT (lore characters phoning players, server/bots.lua): its own Node.js and the bot
 //      (service/voicebot), set up into bin in the background and started like LiveKit. Voice does not wait for it.
@@ -21,9 +21,9 @@
 //
 //   whip_voice:builtin:start  { bot }                    Lua -> here: start (asked again: says how it stands)
 //   whip_voice:builtin:state  { phase, why, ... }        here -> Lua: how it stands; the keys once LiveKit has run
-//   whip_voice:relay:fromGame (src, sock, op, data)      Lua -> here: a piece of a player's signalling
 //
-// and to players' games: whip_voice:client:sig (sock, op, data), read by client/main.lua.
+// and with players' games: whip_voice:server:sig (sock, op, data) from them, whip_voice:client:sig (sock, op, data) to
+// them, read by client/main.lua.
 //
 // server.cfg, all optional (see docs/SETUP.md):
 //   whip_voice_udp     the UDP ports for voices          (default 7882-7893)
@@ -720,16 +720,25 @@ on('onResourceStop', (name) => {
 // ============================================
 //
 // A player's game opens a "connection" (op open, with the path and query its LiveKit client asked for), sends
-// messages (base64, cut into pieces: op more, more, ..., data), and closes it (op close). Each piece is numbered, one
-// up from the last on its connection. LiveKit's signalling is binary (protobuf): a text frame is carried as its bytes. Each is passed to a real
-// WebSocket to LiveKit on this machine, and LiveKit's messages go back as more/data, and its close as close. LiveKit
-// itself checks each connection's token (signed by server/token.lua for that player), so nothing here can let a game
-// into the room that its token does not.
+// messages (base64, cut into pieces: op more, more, ..., data), and closes it (op close). Each is passed to a real
+// WebSocket to LiveKit on this machine, and LiveKit's messages go back as more/data, and its close as close. LiveKit's
+// signalling is binary (protobuf): a text frame is carried as its bytes. LiveKit itself checks each connection's token
+// (signed by server/token.lua for that player), so nothing here can let a game into the room that its token does not.
+//
+// NOT A SECUREEVENT, on purpose (whip_core's rule is that every message from a game is one). What comes in is bytes
+// for LiveKit, which checks them itself; there is no player session to require (the connection lives on at the
+// character screen) and no value to validate beyond its shape, checked below. A SecureEvent would add a hop through
+// Lua and its bookkeeping to every message (most of the 0.3 ms each cost), and its rate limit refused single pieces,
+// which left a gap in a message. Here a game that sends too much loses its connections whole instead (its voice
+// client reconnects), so a piece never goes missing.
 
-const CHUNK = 12000;               // base64 characters per event, as server/builtin.lua's SecureEvent takes
+const CHUNK = 12000;               // base64 characters per piece, both ways (html/js/relay.js cuts at the same)
 const MAX_MESSAGE = 1024 * 1024;   // one signalling message (base64), at most
 const PER_PLAYER = 3;              // connections one game may hold (a reconnect overlaps the old one briefly)
+const RATE = 50, BURST = 300;      // pieces a second one game may send, and how many at once (joining is the busiest)
+const OPS = new Set(['open', 'more', 'data', 'close']);
 const sockets = new Map();         // `${src}:${sock}` -> { ws, src, sock, key, parts, size, pending }
+const budget = new Map();          // src -> { tokens, at }
 
 function toGame(src, sock, op, data) {
     emitNet('whip_voice:client:sig', src, sock, op, data || '');
@@ -754,7 +763,24 @@ function forget(s, code, reason) {
     if (code) closedToGame(s.src, s.sock, code, reason);
 }
 
-function open(src, sock, key, target, seq) {
+/** Every connection of one game closed, and its game told why. */
+function forgetAllOf(src, code, reason) {
+    for (const s of [...sockets.values()]) if (s.src === src) forget(s, code, reason);
+}
+
+/** May this game send one more piece now? (A bucket of BURST, refilled RATE a second.) */
+function withinBudget(src) {
+    const now = Date.now();
+    let b = budget.get(src);
+    if (!b) { b = { tokens: BURST, at: now }; budget.set(src, b); }
+    b.tokens = Math.min(BURST, b.tokens + ((now - b.at) * RATE) / 1000);
+    b.at = now;
+    if (b.tokens < 1) return false;
+    b.tokens -= 1;
+    return true;
+}
+
+function open(src, sock, key, target) {
     if (state.phase !== 'ready') { closedToGame(src, sock, 1013, state.why || 'the voice server is starting'); return; }
     // Only LiveKit's signalling: /rtc (or /rtc/v1) and its query (the token, the client's details).
     if (!/^\/rtc(\/v1)?(\?[^#\s]*)?$/.test(target)) { closedToGame(src, sock, 1008, 'not a voice server address'); return; }
@@ -771,7 +797,7 @@ function open(src, sock, key, target, seq) {
         return;
     }
     ws.binaryType = 'arraybuffer';
-    const s = { ws, src, sock, key, seq, parts: [], size: 0, pending: [] };
+    const s = { ws, src, sock, key, parts: [], size: 0, pending: [] };
     sockets.set(key, s);
     ws.addEventListener('open', () => {
         if (sockets.get(key) !== s) return;
@@ -791,23 +817,15 @@ function open(src, sock, key, target, seq) {
     ws.addEventListener('error', () => { /* a close follows */ });
 }
 
-on('whip_voice:relay:fromGame', (src, sock, op, data, seq) => {
-    src = Number(src);
-    sock = Number(sock);
-    seq = Number(seq);
-    data = typeof data === 'string' ? data : '';
-    if (!Number.isInteger(src) || !Number.isInteger(sock) || !Number.isInteger(seq)) return;
+/** One piece of a game's signalling (client/main.lua passes them on from html/js/relay.js, in order). */
+function fromGame(src, sock, op, data) {
     const key = `${src}:${sock}`;
-    if (op === 'open') { open(src, sock, key, data, seq); return; }
+    if (op === 'open') { open(src, sock, key, data); return; }
     const s = sockets.get(key);
     if (!s) {
         if (op !== 'close') closedToGame(src, sock, 1006, 'that voice connection is gone');
         return;
     }
-    // EVERY PIECE IN TURN. One that never came (refused by the rate limit, or lost between the page and the game)
-    // would make the next message garbage: the connection closes instead, and the voice client reconnects.
-    if (seq !== s.seq + 1) { forget(s, 1011, 'a piece of its signalling was lost'); return; }
-    s.seq = seq;
     if (op === 'close') { forget(s, 1000, ''); return; }
     s.parts.push(data);
     s.size += data.length;
@@ -818,9 +836,23 @@ on('whip_voice:relay:fromGame', (src, sock, op, data, seq) => {
     s.size = 0;
     if (s.ws.readyState === 1) s.ws.send(buf);
     else if (s.ws.readyState === 0) s.pending.push(buf);
+}
+
+onNet('whip_voice:server:sig', (sock, op, data) => {
+    const src = Number(global.source);
+    if (!Number.isInteger(src) || src <= 0) return;
+    // Its shape: a connection number, one of four ops, a piece no longer than a piece is cut. Anything else is no
+    // voice relay's: its connections go.
+    if (!Number.isInteger(sock) || sock < 1 || sock > 2147483647 || !OPS.has(op) || typeof data !== 'string' || data.length > CHUNK) {
+        forgetAllOf(src, 1008, 'not a voice relay message');
+        return;
+    }
+    if (!withinBudget(src)) { forgetAllOf(src, 1008, 'too much signalling at once'); return; }
+    fromGame(src, sock, op, data);
 });
 
 on('playerDropped', () => {
     const src = Number(global.source);
+    budget.delete(src);
     for (const s of [...sockets.values()]) if (s.src === src) forget(s);
 });
