@@ -39,6 +39,21 @@ local function lineSpec()
 end
 
 local function lineOf(freq) return Lines.shared('radio:' .. tostring(freq), lineSpec) end
+--- Is this a frequency a radio can be on? true, or false and why.
+function Radio.validFrequency(freq)
+    local lo, hi = bounds()
+    if math.type(freq) ~= 'integer' or freq < lo or freq > hi then
+        return false, ('a frequency is a whole number from %d to %d'):format(lo, hi)
+    end
+    return true
+end
+
+--- A frequency's line, made if nobody is on it yet: for a world voice going on the radio (server/bots.lua). Check the
+--- frequency first (Radio.validFrequency).
+function Radio.lineFor(freq)
+    return lineOf(freq)
+end
+
 local function leaveFreq(src, freq, why)
     local id = freq and Lines.byKey['radio:' .. tostring(freq)]
     if id then Lines.leave(id, src, why or 'off') end

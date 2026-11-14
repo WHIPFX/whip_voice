@@ -245,14 +245,16 @@ function Audibility.lineStep(players, lines, state, now)
         for _, l in ipairs(here) do
             local L = l.P
             local had = oldT[L.src] or {}
-            -- A voice bot (P.bot: server/bots.lua) only talks: never a listener; no position, so no distance or
-            -- world rule applies to it.
+            -- A voice bot (P.bot: server/bots.lua) only talks: never a listener. A call's bot has no position, so no
+            -- distance or world rule applies to it; a world voice on the radio (P.placed) talks from its entity, as a
+            -- player does.
             for _, s in ipairs(here) do
                 local S = s.P
-                if S ~= L and not L.bot and S.speaks and not s.m.muted and (S.bot or not line.sameWorld or S.bucket == L.bucket) then
+                local nowhere = S.bot and not S.placed
+                if S ~= L and not L.bot and S.speaks and not s.m.muted and (nowhere or not line.sameWorld or S.bucket == L.bucket) then
                     local cur = had[S.src]
                     local link
-                    if Q and not S.bot then
+                    if Q and not nowhere then
                         local d = dist(L, S)
                         if d <= Q.range then
                             link = { q = Audibility.signal(d, Q.clear, Q.range) }

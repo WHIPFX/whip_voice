@@ -5,13 +5,16 @@
 // on 127.0.0.1 with a shared token, and signs each call's voice-room token itself, so this service holds no voice
 // server secret.
 //
-//   POST   /calls               { id, url, token, audio?, allow, keep? }  join as that identity, get the recording (audio:
+//   POST   /calls               { id, url, token, audio?, allow, keep?, radio? }  join as that identity, get the recording (audio:
 //                                                                   a link, or "file:<full path>"; none: one comes with
 //                                                                   play), publish a muted 'voice' track -> { duration }
 //                                                                   keep: a voice that stays (a lore character in the
 //                                                                   world, whip_voice's world voices): many recordings,
 //                                                                   kept until let go or 30 minutes unused
-//   POST   /calls/:id/allow     { allow }                          who may hear it (identities); nobody else can
+//                                                                   radio: a 'radio' track too (a world voice that can
+//                                                                   go on a radio frequency), as a player's microphone
+//   POST   /calls/:id/allow     { allow, radio? }                  who may hear it (identities), and who its radio
+//                                                                   track; nobody else can
 //   POST   /calls/:id/play      { audio? }                         plays it (or this recording instead, which stays
 //                                                                   its recording) once someone allowed is listening; a
 //                                                                   play while one is under way cuts that one off
@@ -44,7 +47,7 @@ import decode from '@audio/decode';
 import { AgentHost } from './agent/index.mjs';
 import { concat } from './agent/audio.mjs';
 
-const VERSION = '1.3.2';
+const VERSION = '1.4.0';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RATE = 48000, FRAME = RATE / 100;          // 10 ms frames, mono, as the voice room's audio
 // A RECORDING IS SENT AT RECORDING QUALITY. Left to LiveKit's default it went at a speech bitrate with DTX (which
@@ -136,20 +139,28 @@ function ffi(message) {
 }
 
 /** Who may hear this call's track: exactly these identities (everyone else is refused by the voice server). */
-function setAllowed(call, identities) {
+function setAllowed(call, identities, radio) {
     const sid = call.pub && call.pub.sid;
     if (!sid || !call.room.localParticipant) return;
+    // Each identity: the voice track if it is on `identities`, the radio track if on `radio` (as a player's page does).
+    const rsid = call.radioPub && call.radioPub.sid;
+    const tracks = new Map();
+    for (const id of identities) tracks.set(id, [sid]);
+    if (rsid) for (const id of radio || []) tracks.set(id, [...(tracks.get(id) || []), rsid]);
     ffi({ case: 'setTrackSubscriptionPermissions', value: new SetTrackSubscriptionPermissionsRequest({
         localParticipantHandle: call.room.localParticipant.ffi_handle.handle,
         allParticipantsAllowed: false,
-        permissions: identities.map((id) => new ParticipantTrackPermission({ participantIdentity: id, allowAll: false, allowedTrackSids: [sid] })),
+        permissions: [...tracks].map(([id, sids]) => new ParticipantTrackPermission({ participantIdentity: id, allowAll: false, allowedTrackSids: sids })),
     }) });
 }
 
 /** Muted (silent, as a player off their talk key) or not. */
 function setMuted(call, mute) {
-    if (!call.track) return;
-    ffi({ case: 'localTrackMute', value: new LocalTrackMuteRequest({ trackHandle: call.track.ffi_handle.handle, mute }) });
+    // Both tracks together: what it says goes out on the radio too while it is on a frequency (its radio track's
+    // listeners are only the people on it).
+    for (const t of [call.track, call.radioTrack]) {
+        if (t) ffi({ case: 'localTrackMute', value: new LocalTrackMuteRequest({ trackHandle: t.ffi_handle.handle, mute }) });
+    }
 }
 
 // ---------------------------------------------------------------- recordings
@@ -290,8 +301,8 @@ async function leave(call, why) {
 }
 
 async function startCall(b) {
-    const call = { id: b.id, room: new Room(), state: 'joining', allow: b.allow, heard: false, playedMs: 0, made: Date.now(),
-        used: Date.now(), keep: b.keep === true, gen: 0, rec: null };
+    const call = { id: b.id, room: new Room(), state: 'joining', allow: b.allow, radioAllow: [], heard: false, playedMs: 0,
+        made: Date.now(), used: Date.now(), keep: b.keep === true, gen: 0, rec: null };
     calls.set(call.id, call);
     try {
         const join = call.room.connect(b.url, b.token, { autoSubscribe: false, dynacast: false });
@@ -304,8 +315,13 @@ async function startCall(b) {
         call.source = new AudioSource(RATE, 1);
         call.track = LocalAudioTrack.createAudioTrack('voice', call.source);
         call.pub = await call.room.localParticipant.publishTrack(call.track, PUBLISH());
+        if (b.radio) {
+            // The same sound, as a second track: its listeners are the people on the radio frequency it is on.
+            call.radioTrack = LocalAudioTrack.createAudioTrack('radio', call.source);
+            call.radioPub = await call.room.localParticipant.publishTrack(call.radioTrack, PUBLISH());
+        }
         setMuted(call, true);
-        setAllowed(call, call.allow);
+        setAllowed(call, call.allow, call.radioAllow);
         call.room.on(RoomEvent.LocalTrackSubscribed, () => { call.heard = true; });
         call.room.on(RoomEvent.Disconnected, () => { if (calls.get(call.id) === call) leave(call, 'the voice room let go'); });
         call.state = 'ready';
@@ -432,7 +448,8 @@ const server = http.createServer(async (req, res) => {
             if (calls.size >= CFG.maxCalls) return send(res, 429, { ok: false, error: 'busy', max: CFG.maxCalls });
             if (b.audio != null && typeof b.audio !== 'string') return send(res, 400, { ok: false, error: 'audio' });
             try {
-                return send(res, 200, await startCall({ id: b.id, url: b.url, token: b.token, audio: b.audio, allow, keep: b.keep === true }));
+                return send(res, 200, await startCall({ id: b.id, url: b.url, token: b.token, audio: b.audio, allow, keep: b.keep === true,
+                    radio: b.radio === true }));
             } catch (e) {
                 return send(res, 422, { ok: false, error: e.message });
             }
@@ -448,10 +465,13 @@ const server = http.createServer(async (req, res) => {
             return send(res, 200, { ok: true });
         }
         if (req.method === 'POST' && parts[2] === 'allow') {
-            const allow = allowList((await readBody(req)).allow);
-            if (!allow) return send(res, 400, { ok: false, error: 'allow' });
+            const b = await readBody(req);
+            const allow = allowList(b.allow);
+            const radio = allowList(b.radio || []);
+            if (!allow || !radio) return send(res, 400, { ok: false, error: 'allow' });
             call.allow = allow;
-            if (call.state !== 'joining') setAllowed(call, allow);
+            call.radioAllow = radio;
+            if (call.state !== 'joining') setAllowed(call, allow, radio);
             return send(res, 200, { ok: true });
         }
         if (req.method === 'POST' && parts[2] === 'play') {

@@ -29,6 +29,11 @@
 --   exports.whip_voice:MoveWorldVoice(key, { netId = n })                        -> true | false, why
 --   exports.whip_voice:SetWorldVoiceRange(key, range, fullWithin)                -> true | false, why
 --       how far it carries (2-300 m), and how far out it is still at full volume (nil: the usual, a metre)
+--   exports.whip_voice:SetWorldVoiceMegaphone(key, on)                            -> true | false, why
+--       a megaphone up (Config.Megaphone: its range times rangeMultiplier, the bullhorn sound), or down
+--   exports.whip_voice:SetWorldVoiceRadio(key, frequency | false)                  -> true | false, why
+--       on a radio frequency (as a player's radio item: everyone on it hears what it says, breaking up with distance
+--       from its entity), or off it. The people near it still hear it in the world.
 --   exports.whip_voice:RemoveWorldVoice(key)                                      -> true
 --
 -- The built-in voice server (server/builtin.js) sets up and starts the service itself, with a token of its own. With
@@ -107,16 +112,30 @@ function VoiceBots.count()
     return n
 end
 
---- The bots on lines, as the line pass reads talkers: no position, no bucket, never a listener.
+--- The bots on lines, as the line pass reads talkers: never a listener. A call's bot is nowhere (no distance, no world
+--- rule); a world voice on a radio frequency talks from its entity (`placed`), so the radio breaks up with distance
+--- and only its own world hears it, as for a player.
 function VoiceBots.talkers(players)
     local out = {}
     for i = 1, #players do out[i] = players[i] end
     for key, b in pairs(VoiceBots.byKey) do
         if b.lineId then
-            out[#out + 1] = { src = key, bot = true, speaks = true, bucket = -1, x = 0.0, y = 0.0, z = 0.0, range = 0 }
+            local t = { src = key, bot = true, speaks = true, bucket = -1, x = 0.0, y = 0.0, z = 0.0, range = 0 }
+            local ent = b.world and b.world.netId and NetworkGetEntityFromNetworkId(b.world.netId) or 0
+            if ent ~= 0 and DoesEntityExist(ent) then
+                local c = GetEntityCoords(ent)
+                t.placed, t.bucket, t.x, t.y, t.z = true, GetEntityRoutingBucket(ent), c.x, c.y, c.z
+            end
+            out[#out + 1] = t
         end
     end
     return out
+end
+
+--- How far a world voice carries now: its range, times the megaphone's while one is up.
+local function worldRange(w)
+    if w.megaphone and Megaphone then return w.range * Megaphone.multiplier() end
+    return w.range
 end
 
 --- Everyone the proximity pass works with: the players, and every world voice where its entity is now (a speaker
@@ -131,19 +150,20 @@ function VoiceBots.inWorld(players)
             if not out then out = {}; for i = 1, #players do out[i] = players[i] end end
             local c = GetEntityCoords(ent)
             out[#out + 1] = { src = key, bot = true, speaks = true, bucket = GetEntityRoutingBucket(ent),
-                              x = c.x, y = c.y, z = c.z, range = w.range }
+                              x = c.x, y = c.y, z = c.z, range = worldRange(w) }
         end
     end
     return out or players
 end
 
 --- A world voice as a listener's game is told of it: where it comes from (the entity's network id), how far it
---- carries, and how far out it is still at full volume (`full`, only when set: html/js/audio.js fade). nil for a bot
---- that is not one.
+--- carries, how far out it is still at full volume (`full`, only when set: html/js/audio.js fade), and its megaphone's
+--- sound while one is up. nil for a bot that is not one.
 function VoiceBots.worldEntry(key)
     local b = VoiceBots.byKey[key]
     if not (b and b.world) then return nil end
-    return { id = b.identity, ent = b.world.netId, range = b.world.range, full = b.world.full }
+    return { id = b.identity, ent = b.world.netId, range = worldRange(b.world), full = b.world.full,
+             fx = b.world.megaphone and 'megaphone' or nil }
 end
 
 --- The identity a bot is heard by, or nil.
@@ -152,11 +172,12 @@ function VoiceBots.identityOf(key)
     return b and b.identity or nil
 end
 
---- Who may hear a bot now (identities): told to the service (hearing.lua sends only changes).
-function VoiceBots.allow(key, identities)
+--- Who may hear a bot now (identities), and who its radio track (a world voice on a frequency): told to the service
+--- (hearing.lua sends only changes).
+function VoiceBots.allow(key, identities, radio)
     local b = VoiceBots.byKey[key]
     if not b then return end
-    send('POST', '/calls/' .. b.identity .. '/allow', { allow = identities })
+    send('POST', '/calls/' .. b.identity .. '/allow', { allow = identities, radio = radio or {} })
 end
 
 --- Let go of a bot: off its line, out of the voice room, its owner told why.
@@ -232,8 +253,9 @@ function VoiceBots.create(owner, spec)
     local deadline = GetGameTimer() + math.floor((tonumber(Config.VoiceBot and Config.VoiceBot.WaitSeconds) or 5) * 1000)
     local status, data
     repeat
+        -- A world voice can go on a radio frequency: it sends a 'radio' track too, as a player's microphone does.
         status, data = request('POST', '/calls', { id = identity, url = roomUrl(), token = token, audio = audio, allow = {},
-                                                   keep = spec.world ~= nil })
+                                                   keep = spec.world ~= nil, radio = spec.world ~= nil })
         if status ~= 429 then break end
         Wait(500)
     until GetGameTimer() > deadline
@@ -307,6 +329,27 @@ function VoiceBots.join(key, lineId)
     Lines.ofPlayer[key] = Lines.ofPlayer[key] or {}
     Lines.ofPlayer[key][lineId] = true
     if Hearing then Hearing.wake() end
+    return true
+end
+
+--- A world voice on a radio frequency (server/radio.lua's line for it), off the one it was on; freq nil: off the radio.
+function VoiceBots.setRadio(key, freq)
+    local b = VoiceBots.byKey[key]
+    if not (b and b.world) then return false, 'no such world voice' end
+    if freq ~= nil and b.radio == freq then return true end
+    if freq ~= nil then
+        local okF, fwhy = Radio.validFrequency(freq)
+        if not okF then return false, fwhy end
+    end
+    if b.lineId then
+        local was = b.lineId
+        b.lineId, b.radio = nil, nil
+        if Lines.byId[was] and Lines.byId[was].members[key] then Lines.leave(was, key, 'off') end
+    end
+    if freq == nil then return true end
+    local ok, jwhy = VoiceBots.join(key, Radio.lineFor(freq))
+    if not ok then return false, jwhy end
+    b.radio = freq
     return true
 end
 
@@ -455,6 +498,30 @@ exports('SetWorldVoiceRange', function(key, range, full)
     -- (Those hearing it now: the new edge at once. Those it now reaches: the next pass connects them.)
     if Hearing and Hearing.rangeChanged then Hearing.rangeChanged(key) end
     return true
+end)
+
+exports('SetWorldVoiceMegaphone', function(key, on)
+    local owner = GetInvokingResource()
+    local b, w = mine(owner, key)
+    if not b then return false, w end
+    if not b.world then return false, 'that voice bot is on a line, not in the world' end
+    on = on == true
+    if (b.world.megaphone == true) == on then return true end
+    b.world.megaphone = on or nil
+    -- Everyone hearing it hears the change at once; who is in reach now is worked out on the next pass.
+    if Hearing then Hearing.rangeChanged(key); Hearing.wake() end
+    return true
+end)
+
+exports('SetWorldVoiceRadio', function(key, freq)
+    local owner = GetInvokingResource()
+    local b, w = mine(owner, key)
+    if not b then return false, w end
+    if not b.world then return false, 'that voice bot is on a line, not in the world (a call bot has its line)' end
+    if freq == false or freq == nil then return VoiceBots.setRadio(key, nil) end
+    local f = math.tointeger(tonumber(freq))
+    if not f then return false, 'a frequency is a whole number' end
+    return VoiceBots.setRadio(key, f)
 end)
 
 exports('RemoveWorldVoice', function(key)
