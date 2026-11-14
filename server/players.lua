@@ -87,11 +87,16 @@ function Voice.issueToken(src)
             canSubscribe = true,
         },
     }, 120)
-    if not token then return false, 'Voice is not set up on this server (whip_voice_key / whip_voice_secret)' end
+    if not token then
+        if VoiceBuiltin.on then return false, 'Voice is unavailable: ' .. tostring(VoiceBuiltin.why() or 'no keys yet') end
+        return false, 'Voice is not set up on this server (whip_voice_key / whip_voice_secret)'
+    end
 
     Voice.players[src] = { identity = identity, joined = false, speaking = false, range = range }
     Voice.sourceOf[identity] = src
-    return { url = GetConvar('whip_voice_url', ''), token = token }
+    -- The built-in voice server's address is not a real one: the voice page carries that connection through the game
+    -- and this server (html/js/relay.js, server/builtin.js).
+    return { url = VoiceServer.playerUrl(), token = token }
 end
 
 --- The player's game says how its connection stands: in the room, and whether its mic is live

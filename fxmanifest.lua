@@ -3,19 +3,23 @@ game 'gta5'
 
 name 'whip_voice'
 author 'Whippy'
-description 'Voice chat on your own voice server: voices placed in 3D, and voice effects'
+description 'Voice chat on a voice server of its own: voices placed in 3D, and voice effects'
 version '0.1.0'
 
--- HOW IT WORKS: each player's game sends their microphone to YOUR voice server (LiveKit, set up by
--- service\install.ps1), which passes it on to the players near them. This FiveM server never carries
--- audio; it decides who may hear whom. The service\ folder is setup only and is never sent to players.
+-- HOW IT WORKS: each player's game sends their microphone to a voice server (LiveKit), which passes it on to
+-- the players near them. This FiveM server never carries audio; it decides who may hear whom. The voice server
+-- is BUILT IN (server/builtin.js runs it on this machine: nothing to set up but the voice ports), or your own
+-- (whip_voice_url in server.cfg: service\install.ps1 sets one up). bin\ (the built-in one's downloads) and
+-- service\ are never sent to players.
 
 shared_script '@whip_core/lib/satellite.lua'
 shared_script 'config.lua'
 shared_script 'shared/sound_blocks.lua'   -- the building blocks of a sound recipe, and their limits
 
 server_scripts {
-    'server/token.lua',         -- voice server tokens and random voice identities (SHA-256 in Lua: no JavaScript)
+    'server/builtin.lua',       -- the built-in voice server, the Lua side: how it stands, and the relay's event
+    'server/builtin.js',        -- the built-in voice server: runs LiveKit (and the voice bot), relays players' signalling
+    'server/token.lua',         -- voice server tokens and random voice identities (signed in Lua: SHA-256 written out)
     'server/voice_server.lua',  -- the voice server's room API
     'server/players.lua',       -- who is connected to voice
     'server/audibility.lua',    -- the who-hears-whom rule (pure, no FiveM in it)
@@ -53,6 +57,7 @@ files {
     'html/js/fx.js',            -- the sound engine: recipes built from blocks
     'html/js/lines.js',         -- voices on a line (a radio frequency, a call)
     'html/js/radio.js',
+    'html/js/relay.js',         -- the built-in voice server's signalling, through the game
     'html/js/voice.js',
     'html/js/walkie.js',
     'html/js/vendor/livekit-client.umd.js',

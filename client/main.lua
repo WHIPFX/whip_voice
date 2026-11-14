@@ -368,6 +368,24 @@ RegisterNUICallback('state', function(d, cb)
     cb('ok')
 end)
 
+-- THE BUILT-IN VOICE SERVER'S SIGNALLING (html/js/relay.js, server/builtin.js). The page cannot open a connection to
+-- it (players' games only open secure ones), so each message goes page -> here -> the server, which passes it to the
+-- voice server, and its answers come back the same way. Items arrive in order, in batches: { sock, op, data }.
+RegisterNUICallback('sig', function(d, cb)
+    if type(d) == 'table' and type(d.items) == 'table' then
+        for _, it in ipairs(d.items) do
+            if type(it) == 'table' and type(it[1]) == 'number' and type(it[2]) == 'string' then
+                TriggerServerEvent('whip_voice:server:sig', it[1], it[2], type(it[3]) == 'string' and it[3] or '')
+            end
+        end
+    end
+    cb('ok')
+end)
+
+RegisterNetEvent('whip_voice:client:sig', function(sock, op, data)
+    SendNUIMessage({ action = 'sig', sock = sock, op = op, data = data })
+end)
+
 RegisterNUICallback('disconnected', function(d, cb)
     joined, joining = false, false
     forgetVoices()
