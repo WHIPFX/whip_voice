@@ -1,5 +1,5 @@
 -- Voice bots: a recording heard on a line as if someone on it were talking. A lore character phoning a player is a
--- call line whose other end is a bot: the voice bot service (installed by the setup wizard) joins the voice room under
+-- call line whose other end is a bot: the voice bot service (the built-in voice server's, or the setup wizard's) joins the voice room under
 -- an identity of its own and plays a recording into the line, so a phone on speaker and the people near it work as for
 -- any call.
 --
@@ -31,8 +31,9 @@
 --       how far it carries (2-300 m), and how far out it is still at full volume (nil: the usual, a metre)
 --   exports.whip_voice:RemoveWorldVoice(key)                                      -> true
 --
--- server.cfg: whip_voicebot_token (set, never setr: a shared secret with the service), whip_voicebot_url
--- (default http://127.0.0.1:7899). The setup wizard writes both.
+-- The built-in voice server (server/builtin.js) sets up and starts the service itself, with a token of its own. With
+-- your own voice server, server.cfg: whip_voicebot_token (set, never setr: a shared secret with the service),
+-- whip_voicebot_url (default http://127.0.0.1:7899). The setup wizard writes both.
 
 VoiceBots = { byKey = {} }
 
@@ -41,19 +42,36 @@ local count = 0
 
 local function say(fmt, ...) print(('[whip_voice] voice bot: ' .. fmt):format(...)) end
 
-local function serviceUrl() return (GetConvar('whip_voicebot_url', 'http://127.0.0.1:7899'):gsub('/+$', '')) end
-local function serviceToken() return GetConvar('whip_voicebot_token', '') end
+-- The built-in voice server's bot (server/builtin.js starts it, with a token of its own every start), or the setup
+-- wizard's (server.cfg).
+local function serviceUrl()
+    if VoiceBuiltin.on then return (VoiceBuiltin.bot()) or 'http://127.0.0.1:7899' end
+    return (GetConvar('whip_voicebot_url', 'http://127.0.0.1:7899'):gsub('/+$', ''))
+end
+local function serviceToken()
+    if VoiceBuiltin.on then
+        local url, token = VoiceBuiltin.bot()
+        return url and token or ''
+    end
+    return GetConvar('whip_voicebot_token', '')
+end
+
+--- Why there is no voice bot to ask, in words.
+local function noBot()
+    if VoiceBuiltin.on then return VoiceBuiltin.botWhy() end
+    return 'whip_voicebot_token is not set in server.cfg (the setup wizard writes it)'
+end
 
 --- The voice room's address for the service, on this machine (the API's, as ws://).
 local function roomUrl()
-    local api = GetConvar('whip_voice_api', 'http://127.0.0.1:7880'):gsub('/+$', '')
+    local api = VoiceServer.settings().api
     return (api:gsub('^http', 'ws'))
 end
 
 --- A request to the service: status, the answer's table (or nil). Only inside a thread or handler (it waits).
 local function request(method, path, body)
     local token = serviceToken()
-    if token == '' then return 0, { ok = false, error = 'whip_voicebot_token is not set in server.cfg (the setup wizard writes it)' } end
+    if token == '' then return 0, { ok = false, error = noBot() } end
     local p = promise.new()
     PerformHttpRequest(serviceUrl() .. path, function(status, text)
         local ok, data = pcall(json.decode, text or '')
@@ -72,7 +90,10 @@ local function send(method, path, body)
 end
 
 local function why(status, data)
-    if status == 0 then return (data and data.error) or 'the voice bot service is not running (whip_voice setup: the voice bot step)' end
+    if status == 0 then
+        return (data and data.error) or (VoiceBuiltin.on and VoiceBuiltin.botWhy())
+            or 'the voice bot service is not running (whip_voice setup: the voice bot step)'
+    end
     return (data and data.error) or ('the voice bot service answered ' .. tostring(status))
 end
 
@@ -204,7 +225,7 @@ function VoiceBots.create(owner, spec)
     local token = VoiceToken.sign({ sub = identity, name = name, video = {
         room = Voice.room, roomJoin = true, canPublish = true, canPublishSources = { 'microphone' },
         canSubscribe = false, canPublishData = false } }, 600)
-    if not token then return nil, 'server.cfg has no whip_voice_key / whip_voice_secret' end
+    if not token then return nil, VoiceBuiltin.on and (VoiceBuiltin.why() or 'no voice keys yet') or 'server.cfg has no whip_voice_key / whip_voice_secret' end
     local ok, rwhy = Voice.ensureRoom()
     if not ok then return nil, rwhy end
     -- Past the service's cap the call waits its turn, a few seconds at most.

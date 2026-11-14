@@ -1,17 +1,26 @@
--- whip_voice settings. Voice chat through your own voice server (LiveKit), with voices placed in 3D where each player
--- stands, and voice effects.
+-- whip_voice settings. Voice chat through a voice server (LiveKit), with voices placed in 3D where each player stands,
+-- and voice effects. The guide: whip_voice\docs\SETUP.md. Check it with /voicecheck in game (admins) or in the server
+-- console.
 --
--- Set up: double-click whip_voice\service\Setup voice server.bat on your server machine (guide: whip_voice\docs\SETUP.md).
--- Check it with "Check voice server.bat" next to it, and /voicecheck in game (admins) or in the server console.
+-- THE VOICE SERVER IS BUILT IN: whip_voice downloads LiveKit on its first start and runs it on this machine, with
+-- nothing to set up but the voice ports, which players' games send their voices to. Open these inbound, as you did 30120:
 --
--- The connection to the voice server is not in this file: it lives in server.cfg because it holds a secret, and this
--- file is sent to every player. The setup writes these lines for you:
+--     UDP 7882-7893, and TCP 7881 (used when a player's network blocks UDP)
+--
+-- On Windows, double-click whip_voice\service\Open voice ports.bat for Windows Firewall; your host may have a firewall
+-- of its own in its control panel. Other ports, or a fixed public address, go in server.cfg (whip_voice_udp,
+-- whip_voice_tcp, whip_voice_ip: docs/SETUP.md).
+--
+-- YOUR OWN VOICE SERVER instead (another machine, a domain name, LiveKit Cloud): its connection is not in this file
+-- either. It lives in server.cfg because it holds a secret, and this file is sent to every player. The setup wizard
+-- (service\Setup voice server.bat) writes these lines for you:
 --
 --     set whip_voice_url    "wss://<your server's IP>"     (or wss://voice.your-domain.com, set up with -Domain)
 --     set whip_voice_key    "whip..."
 --     set whip_voice_secret "..."
 --
--- Use plain `set`, never `setr`: `setr` would send the secret to every player.
+-- Use plain `set`, never `setr`: `setr` would send the secret to every player. With whip_voice_url set, the built-in
+-- voice server stays off.
 
 Config = {}
 
@@ -143,14 +152,21 @@ Config.CrowdQuality = {
 -- ---- The voice bot (lore characters phoning players) -------------------------------------------
 
 -- A lore character's call (whip_phone's Call card) plays a recording into the call through the voice
--- bot service: one service on this machine for every character, set up by "Setup voice server.bat"
--- (its voice bot step). Its two server.cfg lines are written by the setup:
+-- bot: one small program on this machine for every character. The built-in voice server sets it up
+-- and starts it by itself, in the background on its first start (its own Node.js and packages, about
+-- 100 MB in whip_voice\bin). `set whip_voice_bot false` in server.cfg leaves it out.
 --
---     set whip_voicebot_url   "http://127.0.0.1:7899"
---     set whip_voicebot_token "..."              (plain set: it is a secret)
---
--- How many calls it plays at once is the service's own setting (service\voicebot\config.json, maxCalls,
--- 30 by default). A call past that waits this many seconds for a free one, then the card's "Couldn't call".
+-- With your own voice server, "Setup voice server.bat" installs it as a Windows service and writes its
+-- two server.cfg lines (whip_voicebot_url, whip_voicebot_token); its settings are then its own
+-- (C:\LiveKit\voicebot\config.json), not the ones below.
 Config.VoiceBot = {
-    WaitSeconds = 5,
+    WaitSeconds = 5,   -- a call past maxCalls waits this many seconds for a free one, then the card's "Couldn't call"
+
+    -- The built-in voice bot's settings (restart whip_voice after a change):
+    maxCalls   = 30,                                -- calls it plays at once
+    audioLinks = { 'https://r2.fivemanage.com/' },  -- the sites recordings may come from (the start of their links).
+                                                    -- Only sites you trust: it downloads whatever a card links to there.
+                                                    -- Files a resource ships ('@my_story/audio/line.ogg') always work.
+    maxSeconds = 120,                               -- the longest recording, in seconds
+    maxMB      = 15,                                -- the biggest recording file, in MB
 }

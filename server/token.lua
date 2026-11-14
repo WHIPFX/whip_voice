@@ -3,12 +3,12 @@
 -- ============================================
 --
 -- The voice server (LiveKit) lets a player in only with a "token": a short note saying who they are
--- and what they may do, signed with the secret from server.cfg so it cannot be forged or edited (a
--- JWT signed HS256, which is HMAC-SHA256). SHA-256 and HMAC are written out below in plain Lua. They
--- were a JavaScript file once, and any JavaScript in a resource has FXServer enter it every server
--- frame whether it has work or not (about 0.4 ms a second, for a token every few minutes).
+-- and what they may do, signed with the secret (the built-in voice server's, or server.cfg's) so it cannot
+-- be forged or edited (a JWT signed HS256, which is HMAC-SHA256). SHA-256 and HMAC are written out below in
+-- plain Lua, so every token is signed here (server/builtin.js, which runs the built-in voice server, makes
+-- its keys and hands them over, and signs nothing itself).
 --
---   VoiceToken.sign(claims, ttl)   a signed token, or nil when server.cfg has no key or secret
+--   VoiceToken.sign(claims, ttl)   a signed token, or nil when there is no key or secret (yet)
 --   VoiceToken.randomId()          16 hex characters nobody can guess
 --
 -- SERVER ONLY, and not exported: nothing outside whip_voice can sign. The secret never leaves here.
@@ -113,10 +113,9 @@ VoiceToken._sha256, VoiceToken._hmac, VoiceToken._b64url = sha256, hmac, b64url
 --- Sign a voice server token.
 ---@param claims table  what the token says: { sub = identity, video = { grants } }
 ---@param ttl number    seconds it stays valid (10 at the least)
----@return string|nil   the token, or nil when server.cfg has no key or secret
+---@return string|nil   the token, or nil when there is no key or secret yet
 function VoiceToken.sign(claims, ttl)
-    local key = GetConvar('whip_voice_key', '')
-    local secret = GetConvar('whip_voice_secret', '')
+    local key, secret = VoiceServer.credentials()   -- the built-in voice server's, or server.cfg's
     if key == '' or secret == '' then return nil end
 
     local now = os.time()
@@ -145,7 +144,7 @@ function VoiceToken.randomId()
     _made = _made + 1
     local seed = ('voice-id|%d|%d|%s|%d|%d'):format(_made, os.time(), tostring(os.clock()), GetGameTimer(),
         math.random(0, 0x7fffffff))
-    local secret = GetConvar('whip_voice_secret', '')
+    local _, secret = VoiceServer.credentials()
     local bytes = secret ~= '' and hmac(secret, seed) or sha256(seed)
     return (bytes:sub(1, 8):gsub('.', function(c) return ('%02x'):format(c:byte()) end))
 end

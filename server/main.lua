@@ -12,8 +12,9 @@ local function say(line) print('[whip_voice] ' .. line) end
 
 -- ONE LINE AT START: either "voice server OK" or exactly what is wrong and where to fix it. Then a
 -- fresh room for this start of whip_voice — players from before a restart must not linger in the old
--- one — and the old rooms are closed.
-CreateThread(function()
+-- one — and the old rooms are closed. The built-in voice server: each time it (re)starts and answers
+-- (server/builtin.js says so), as a voice server that started again has no rooms.
+local function openRoom()
     VoiceServer.check(function(ok, why)
         say(why)
         if not ok then return end
@@ -34,7 +35,9 @@ CreateThread(function()
             TriggerClientEvent('whip_voice:client:reconnect', -1)
         end)
     end)
-end)
+end
+
+if VoiceBuiltin.on then VoiceBuiltin.whenReady(openRoom) else CreateThread(openRoom) end
 
 --- Everything declared to whip_core, again whenever it restarts (lib/satellite.lua).
 local function RegisterWithWhip()
@@ -49,6 +52,9 @@ local function RegisterWithWhip()
         say('NOT STARTED: ' .. tostring(notWhy) .. ' (stop the other voice resource, or this one)')
         return
     end
+
+    -- The built-in voice server (no whip_voice_url in server.cfg): the relay's event, and starting it (server/builtin.lua).
+    VoiceBuiltin.register(core)
 
     -- A loaded player's pass into the voice room. whileDead: the dead still listen.
     core:SecureCallback('whip_voice:token', { rateLimit = 2000, burst = 3, whileDead = true },
@@ -112,7 +118,14 @@ Whip.command('voicestatus', { dev = true, whileDead = true }, function(source)
     end
 
     local s = VoiceServer.settings()
-    reply(('players connect to: %s'):format(s.url ~= '' and s.url or '(whip_voice_url not set)'))
+    if s.builtin then
+        local b = VoiceBuiltin.state
+        reply(('the built-in voice server: %s (LiveKit %s); players\' games send voices to %s'):format(
+            tostring(b.phase), tostring(b.version or '?'), VoiceBuiltin.ports()))
+        reply(('the voice bot: %s%s'):format(tostring(b.bot.phase), b.bot.why and (' (' .. tostring(b.bot.why) .. ')') or ''))
+    else
+        reply(('players connect to: %s'):format(s.url ~= '' and s.url or '(whip_voice_url not set)'))
+    end
     reply(('this server reaches it at: %s'):format(s.api))
     reply(('room: %s'):format(Voice.room or '(not open)'))
     VoiceServer.check(function(ok, why)

@@ -2,13 +2,14 @@
 -- whip_voice — /voicecheck: is voice set up right, seen from the game
 -- ============================================
 --
--- For admins in game (the `command` permission) and the server console (txAdmin's Live Console). The
--- machine's half — the services, the ports, DNS, the certificate — is service\check.ps1 ("Check voice
--- server.bat" on the server machine). This is what only the game can see:
+-- For admins in game (the `command` permission) and the server console (txAdmin's Live Console). With your own
+-- voice server, the machine's half — the services, the ports, DNS, the certificate — is service\check.ps1 ("Check
+-- voice server.bat" on the server machine). This is what only the game can see:
 --
 --   1. the voice system   is whip_voice the one running (not another voice resource)?
---   2. server.cfg         the three lines, and whether the voice server takes our key
---   3. the address        https://<voice address> answers from here, certificate and all
+--   2. the voice server   the built-in one running (and Windows Firewall letting voices in), or server.cfg's
+--                         three lines; and whether the voice server takes our key
+--   3. the address        your own voice server: https://<voice address> answers from here, certificate and all
 --   4. every player       connected? over UDP (good) or TCP (UDP is blocked)? with a microphone? and can
 --                         their game read whip_voice_secret (server.cfg set it with setr: every player has it)?
 --   5. the voice bot      set up, running, and taking our token? (lore characters' calls)
@@ -21,6 +22,18 @@ local RESOURCE = GetCurrentResourceName()
 local ASK_MS = 4000
 local SETUP = 'on the server machine, double-click whip_voice\\service\\Setup voice server.bat'
 local CHECK = 'on the server machine, double-click whip_voice\\service\\Check voice server.bat: it names the broken piece'
+-- The built-in voice server's fixes.
+local LOGS = 'the server console\'s [whip_voice] lines from its start say why (and whip_voice/bin/logs/livekit.log)'
+local PORTS_BAT = 'on the server machine, double-click whip_voice\\service\\Open voice ports.bat (it asks for administrator rights)'
+
+--- How to open the voice ports (`what`: "UDP 7882-7893 (TCP 7881 ...)"), the way this server's voice server needs it.
+local function openPorts(what)
+    if VoiceBuiltin.on then
+        return ('allow %s inbound: in Windows Firewall (double-click whip_voice\\service\\Open voice ports.bat on the server '
+            .. 'machine), and in your HOST\'s firewall, its website\'s control panel, if it has one (as for 30120)'):format(what)
+    end
+    return ('allow %s inbound in your HOST\'s firewall (its website\'s control panel); %s for the Windows side'):format(what, CHECK)
+end
 
 local asks = {}        -- [nonce] = { [src] = answer } while players are being asked
 local lastNonce = 0
@@ -67,18 +80,34 @@ function VoiceCheck.run(say)
         good('whip_voice is the voice system')
     end
 
-    -- 2. server.cfg, and the voice server taking our key.
+    -- 2. The voice server (built in, or server.cfg's), and it taking our key.
     local s = VoiceServer.settings()
     local ok, why = await(15000, function(done) VoiceServer.check(done) end)
-    if ok == nil then bad('the voice server did not answer within 15 seconds', CHECK)
+    if ok == nil then bad('the voice server did not answer within 15 seconds', s.builtin and LOGS or CHECK)
     elseif ok then good(why)
+    elseif s.builtin then bad(why, LOGS)
     else bad(why, SETUP .. ' (it prints the server.cfg lines and checks the rest)') end
+
+    -- The built-in voice server on Windows: does Windows Firewall let voices in? Read afresh (server/builtin.js runs
+    -- service/firewall.ps1), as "Open voice ports.bat" may have been run since the start.
+    if s.builtin and VoiceBuiltin.ready() then
+        local f = await(20000, function(done) VoiceBuiltin.checkFirewall(done) end)
+        if type(f) == 'table' and f.on then
+            if f.blocked then
+                bad('Windows Firewall blocks the voice server (someone answered Cancel when Windows asked about it)', PORTS_BAT)
+            elseif not f.open then
+                bad(('Windows Firewall does not let voices in: %s is not open'):format(VoiceBuiltin.ports()), PORTS_BAT)
+            else
+                good('Windows Firewall lets voices in')
+            end
+        end
+    end
 
     -- 3. The players' address, from here. Players already connected through it prove it works for them better than
     -- this server's own request can: FiveM for GTAV Enhanced's server (its own HTTP code, not Legacy's curl) got a
     -- 400 from the address where Legacy, browsers and every player's game got LiveKit's "OK" (25 Oct 2026). With
     -- players connected it is right, and this server's own failure is only a note.
-    local host = tostring(s.url or ''):match('^wss://([^/:]+)')
+    local host = not s.builtin and tostring(s.url or ''):match('^wss://([^/:]+)') or nil
     if host then
         local status, body, _, errorData = await(12000, function(done)
             PerformHttpRequest('https://' .. host .. '/?whipcheck=1', function(st, text, hdrs, err) done(st, text, hdrs, err) end,
@@ -134,7 +163,9 @@ function VoiceCheck.run(say)
                 if a.secretSeen then leaked = leaked + 1 end
                 if not a.joined then
                     bad(('%s is not connected to voice: %s'):format(name, a.why ~= '' and a.why or 'no reason given'),
-                        'if it is everyone, ' .. CHECK .. '; if it is only them, their game may block the microphone or the connection')
+                        (s.builtin and ('if it is everyone, the voice ports are shut: ' .. openPorts(VoiceBuiltin.ports()))
+                            or ('if it is everyone, ' .. CHECK))
+                        .. '; if it is only them, their game may block the microphone or the connection')
                 elseif a.why ~= '' then
                     -- Connected (they hear) without a microphone: how they connect cannot be read without one.
                     nomic[#nomic + 1] = ('%s: %s'):format(name, a.why)
@@ -146,8 +177,8 @@ function VoiceCheck.run(say)
         if #udp > 0 then good(('%d connected over UDP, the best way: %s'):format(#udp, table.concat(udp, ', '))) end
         if #tcp > 0 then
             if #udp == 0 then
-                bad(('%d connected, all over TCP: UDP 7882-7893 is not getting through to the server'):format(#tcp),
-                    'allow UDP 7882-7893 inbound in your HOST\'s firewall (its website\'s control panel); ' .. CHECK .. ' for the Windows side')
+                local udpPorts = 'UDP ' .. tostring(s.builtin and VoiceBuiltin.state.udp or '7882-7893')
+                bad(('%d connected, all over TCP: %s is not getting through to the server'):format(#tcp, udpPorts), openPorts(udpPorts))
             else
                 warn(('%d connected over TCP, not UDP: %s. Their own network blocks UDP (voice works, but can stutter)')
                     :format(#tcp, table.concat(tcp, ', ')))
@@ -169,10 +200,32 @@ function VoiceCheck.run(say)
         end
     end
 
-    -- 5. The voice bot (lore characters' calls). No token in server.cfg: a bot that answers (refusing us) is
-    -- installed, and only this server.cfg's line is missing.
+    -- 5. The voice bot (lore characters' calls). The built-in voice server's: set up and started by whip_voice. Your own
+    -- voice server's, with no token in server.cfg: a bot that answers (refusing us) is installed, and only this
+    -- server.cfg's line is missing.
     local botUrl = GetConvar('whip_voicebot_url', 'http://127.0.0.1:7899'):gsub('/+$', '')
-    if GetConvar('whip_voicebot_token', '') == '' then
+    if s.builtin then
+        local url, token = VoiceBuiltin.bot()
+        local phase = VoiceBuiltin.state.bot.phase
+        if not url then
+            if phase == 'off' or phase == 'installing' then
+                warn(VoiceBuiltin.botWhy() .. ': lore characters cannot phone players yet')
+            else
+                bad(VoiceBuiltin.botWhy() .. ': lore characters cannot phone players',
+                    'whip_voice/bin/logs/voicebot.log (or voicebot-install.log) says why; restart whip_voice to try again')
+            end
+        else
+            local status, body = await(6000, function(done)
+                PerformHttpRequest(url .. '/health', function(st, text) done(st, text) end, 'GET', '', { Authorization = 'Bearer ' .. token })
+            end)
+            local okH, h = pcall(json.decode, body or '')
+            if status == 200 and okH and type(h) == 'table' and h.ok then
+                good(('the voice bot is running (version %s, %d of %d calls in use)'):format(tostring(h.version), tonumber(h.calls) or 0, tonumber(h.max) or 0))
+            else
+                bad('the voice bot did not answer', 'whip_voice/bin/logs/voicebot.log says why; restart whip_voice to try again')
+            end
+        end
+    elseif GetConvar('whip_voicebot_token', '') == '' then
         local status = await(4000, function(done)
             PerformHttpRequest(botUrl .. '/health', function(st) done(st) end, 'GET', '', { Accept = 'application/json' })
         end)

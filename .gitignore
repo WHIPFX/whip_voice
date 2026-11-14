@@ -1,1 +1,4 @@
 /.githooks/__pycache__
+
+# The built-in voice server's downloads, logs and settings (server/builtin.js makes them; never sent to players)
+bin/
