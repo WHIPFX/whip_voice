@@ -459,3 +459,11 @@ function Speakers.register()
 end
 
 AddEventHandler('playerDropped', function() pending[source] = nil end)
+
+-- A character loading: every speaker, sent to its game for their prompts. Its game's own ask as it starts
+-- (client/speakers.lua) comes before any character, and whip refuses a player with none, so the speakers already out
+-- had no prompts for anyone who came in after they were put down: one left out over a restart was a prop nobody
+-- could use (Josh, 14 Nov 2026).
+AddEventHandler('whip_core:player:loaded', function(e)
+    if type(e) == 'table' and e.source then TriggerClientEvent('whip_voice:client:speakers', e.source, views()) end
+end)
