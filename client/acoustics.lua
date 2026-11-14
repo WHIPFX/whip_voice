@@ -290,7 +290,7 @@ local function outward(m, from, seeds, slope, doorOpen)
     end
     while true do
         local c, u = heapPop(hc, hi)
-        if not c then break end
+        if not c or not u then break end
         if not done[u] then
             done[u] = true
             local nu = m.nodes[u]

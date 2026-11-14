@@ -413,7 +413,7 @@ local MIC_WHY = {
 RegisterNUICallback('probe', function(d, cb)
     local nonce = math.tointeger(tonumber(d.nonce))
     local p = nonce and probes[nonce]
-    if p then
+    if nonce and p then
         probes[nonce] = nil
         local t = d.transport
         if t ~= 'udp' and t ~= 'tcp' and t ~= 'relay' then t = 'unknown' end

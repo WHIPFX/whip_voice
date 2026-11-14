@@ -349,6 +349,7 @@ exports('PlayVoiceBot', function(key, onDone)
     local owner = GetInvokingResource()
     local b, w = mine(owner, key)
     if not b then return false, w end
+    ---@cast owner -nil   -- the bot's owner, so a resource
     if onDone ~= nil and type(onDone) ~= 'function' and not isFuncRef(onDone) then return false, 'onDone is a function' end
     local cb = onDone and function(...) if GetResourceState(owner) == 'started' then onDone(...) end end or nil
     local d, pw = VoiceBots.play(key, cb)
@@ -403,6 +404,7 @@ exports('PlayWorldVoice', function(key, audio, onDone)
     local owner = GetInvokingResource()
     local b, w = mine(owner, key)
     if not b then return false, w end
+    ---@cast owner -nil   -- the bot's owner, so a resource
     if not b.world then return false, 'that voice bot is on a line, not in the world (PlayVoiceBot)' end
     if onDone ~= nil and type(onDone) ~= 'function' and not isFuncRef(onDone) then return false, 'onDone is a function' end
     local cb = onDone and function(...) if GetResourceState(owner) == 'started' then onDone(...) end end or nil

@@ -65,7 +65,7 @@ RegisterCommand('voicedebug', function()
                             a.f >= 22000 and 'open' or tostring(a.f)), clear and 140 or 255, clear and 255 or 200, clear and 140 or 90)
                         if a.at then
                             DrawLine(h.x, h.y, h.z, a.at[1], a.at[2], a.at[3], 255, 220, 60, 200)
-                            DrawMarker(28, a.at[1], a.at[2], a.at[3], 0, 0, 0, 0, 0, 0, 0.15, 0.15, 0.15, 255, 220, 60, 160, false, false, 2, false, nil, nil, false)
+                            DrawMarker(28, a.at[1], a.at[2], a.at[3], 0, 0, 0, 0, 0, 0, 0.15, 0.15, 0.15, 255, 220, 60, 160, false, false, 2, false, (nil) --[[@as string]], (nil) --[[@as string]], false)
                         end
                     end
                 end
@@ -92,7 +92,7 @@ RegisterCommand('voicedebug', function()
                     local dx, dy, dz = a[1] - me.x, a[2] - me.y, a[3] - me.z
                     if dx * dx + dy * dy + dz * dz < OPENING_RANGE * OPENING_RANGE then
                         local c = KIND_COLOUR[o.kind] or { 255, 255, 255 }
-                        DrawMarker(28, a[1], a[2], a[3], 0, 0, 0, 0, 0, 0, 0.12, 0.12, 0.12, c[1], c[2], c[3], 180, false, false, 2, false, nil, nil, false)
+                        DrawMarker(28, a[1], a[2], a[3], 0, 0, 0, 0, 0, 0, 0.12, 0.12, 0.12, c[1], c[2], c[3], 180, false, false, 2, false, (nil) --[[@as string]], (nil) --[[@as string]], false)
                         local label = o.kind
                         if o.kind == 'door' then label = o.open and 'door (open)' or 'door (closed)' end
                         if o.to == 0 or o.from == 0 then label = label .. ', to outside' end
