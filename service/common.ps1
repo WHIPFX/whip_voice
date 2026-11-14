@@ -33,8 +33,7 @@ $script:NssmExeSha = 'f689ee9af94b00e9e3f0bb072b34caaf207f32dcb4f5782fc9ca351df9
 #--- An nssm.exe already on this machine, or $null. Only NSSM 2.24's own file is used: both scripts run it as
 #    administrator, and older versions of the setup wizard downloaded it without a check.
 function Find-Nssm([string]$alsoIn = '') {
-    $places = @('C:\Caddy\tools\nssm\nssm-2.24\win64\nssm.exe', 'C:\LiveKit\tools\nssm\nssm-2.24\win64\nssm.exe',
-                'C:\KickSubathonTimer\tools\nssm\nssm-2.24\win64\nssm.exe')
+    $places = @('C:\Caddy\tools\nssm\nssm-2.24\win64\nssm.exe', 'C:\LiveKit\tools\nssm\nssm-2.24\win64\nssm.exe')
     if ($alsoIn) { $places += (Join-Path $alsoIn 'tools\nssm\nssm-2.24\win64\nssm.exe') }
     foreach ($p in $places) {
         if (-not (Test-Path $p)) { continue }
