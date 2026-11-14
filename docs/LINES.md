@@ -143,7 +143,7 @@ and speakers use it.
 
 | Export | Returns | Description |
 |---|---|---|
-| `CreateWorldVoice({ name, at, range, bucket })` | `key` | Creates a voice where `at` says. `range` is 2–300 m, default 12. `bucket` is the routing bucket of fixed spots (default 0). WAITS. |
+| `CreateWorldVoice({ name, at, range, bucket, music })` | `key` | Creates a voice where `at` says. `range` is 2–300 m, default 12. `bucket` is the routing bucket of fixed spots (default 0). `music = true` makes it heard as music (below). WAITS. |
 | `PlayWorldVoice(key, audio, onDone, opts)` | `durationMs` | Plays a recording (`audio` as in `CreateVoiceBot`), cutting off one already playing. WAITS while it loads. |
 | `StopWorldVoice(key, fadeMs)` | `true` | Stops what it plays, at once or faded down over `fadeMs` (up to 30000). |
 | `MoveWorldVoice(key, at)` | `true` | Moves it, keeping its settings. |
@@ -163,7 +163,14 @@ speakers. Each player hears each place by their own distance to it.
 | A place | Comes from |
 |---|---|
 | `{ netId = n }` | An entity, followed as it moves. |
+| `{ netId = n, offset = vector3(x, y, z), model = 'prop_speaker_06' }` | A spot on an entity, in its own frame (up to 10 m from it): a speaker on a car's roof. With `model`, the sound comes out of the object of that model riding there. |
 | `{ coords = vector3(x, y, z), model = 'prop_speaker_06' }` | A fixed spot. With `model`, each player's game finds its own copy of the object standing there, so the object's walls and room are used. |
+
+A world voice made with `music = true` is heard as sound from far off is, which a voice in a conversation must not be:
+it arrives late by its distance at the speed of sound, so as it comes closer or goes away it plays a little faster
+and higher, or slower and lower (the Doppler effect, by the speed itself: a car passing at 110 km/h about a semitone
+and a half); the air takes its treble with distance while its bass carries; and outdoors, the further off it is, the
+more of what you hear is its echo off everything around. The Director's speakers and the speaker item are music.
 
 `opts` for `PlayWorldVoice`: `loop = true` plays it over and over until `StopWorldVoice`; `music = true` lets it be a
 song, up to the voice bot's `musicSeconds` and `musicBytes` (10 minutes and 40 MB unless its config.json says
