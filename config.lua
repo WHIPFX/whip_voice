@@ -102,7 +102,7 @@ Config.Speaker = {
     links        = { 'https://r2.fivemanage.com/' },       -- the only links it plays: where your songs are uploaded
     volume       = 100,   -- a new speaker's volume, % (0-200)
     range        = 30,    -- a new speaker's range, metres
-    maxRange     = 100,   -- the furthest a player may set one to carry, metres (up to 300)
+    maxRange     = 300,   -- the furthest a player may set one to carry, metres (300 at most)
     maxPerPlayer = 3,     -- speakers one character may have out at once
     maxPlaced    = 64,    -- speakers out on the whole server at once
 }
