@@ -80,7 +80,8 @@ function Lines.open(owner, spec)
         members = {},
         onEnd = spec.onEnd, onLeave = spec.onLeave,
     }
-    if line.quality and line.quality.range <= line.quality.clear then line.quality.range = line.quality.clear + 1 end
+    local q = line.quality
+    if q and q.range <= q.clear then q.range = q.clear + 1 end
     Lines.byId[id] = line
     if line.key then Lines.byKey[line.key] = id end
     for _, src in ipairs(type(spec.members) == 'table' and spec.members or {}) do Lines.join(id, src) end

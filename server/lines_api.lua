@@ -52,7 +52,7 @@ function Lines.checkRecipe(recipe)
             sources = sources + 1
             if sources > SoundLimits.sources then
                 local names = {}
-                for b in pairs(SoundLimits.sourceBlocks) do names[#names + 1] = b end
+                for blockName in pairs(SoundLimits.sourceBlocks) do names[#names + 1] = blockName end
                 table.sort(names)
                 return nil, ('at most %d blocks that make sound of their own (%s)'):format(SoundLimits.sources, table.concat(names, ', '))
             end

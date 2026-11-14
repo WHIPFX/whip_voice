@@ -28,8 +28,8 @@ Audibility = {
 function Audibility.normalReach()
     local m = 0
     for _, r in pairs(Config and Config.Ranges or {}) do
-        r = tonumber(r)
-        if r and r > m then m = r end
+        local n = tonumber(r)
+        if n and n > m then m = n end
     end
     return m > 0 and m or 20.0
 end
