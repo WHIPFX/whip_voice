@@ -88,5 +88,6 @@ them or from NPCs. See [docs/LINES.md](docs/LINES.md).
 
 ## License
 
-whip_voice is licensed under the GNU LGPL 3.0 (see `LICENSE`). Third-party components are listed in whip_core's
-`NOTICE.md`. The LiveKit server it downloads is licensed under Apache 2.0.
+whip_voice is licensed under the GNU LGPL 3.0; see `COPYING.LESSER`, and `COPYING` for the GPL 3.0 it builds on.
+`NOTICE.md` says what the licence doesn't cover; `whip_core`'s `NOTICE.md` is the full list. The LiveKit server it
+downloads is licensed under Apache 2.0.
