@@ -78,8 +78,11 @@ local function RegisterWithWhip()
     -- /voicecheck: each player's game answers how it is connected (server/check.lua).
     VoiceCheck.register(core)
 
-    -- The megaphone and the radio (server/items.lua).
+    -- The megaphone, the radio and the speaker (server/items.lua).
     VoiceItems.register(core)
+
+    -- The speaker: put down anywhere, on a car too, and played from a prompt behind it (server/speakers.lua).
+    Speakers.register()
 
     -- The megaphone: use it to hold it up, again to put it down (server/megaphone.lua).
     core:RegisterUseHandler('megaphone', function(source) return Megaphone.use(source) end)

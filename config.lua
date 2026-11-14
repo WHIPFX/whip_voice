@@ -90,6 +90,23 @@ Config.Radio = {
     uiSounds      = true,        -- the 3D radio's key and power beeps; false for none (the talk beeps stay)
 }
 
+-- ---- The speaker (an item) --------------------------------------------------------------------
+--
+-- Use it and put it down exactly where you want it: on the ground, a table, or a car's roof, where it
+-- rides the car (the mouse wheel turns it, the arrow keys raise and lower it). Behind it: Song link
+-- (paste the song's link), Play / Stop, Volume, Range, Pick up. Everyone near hears it, as music:
+-- from far off it comes late and loses its treble, and on a passing car it rises and falls in pitch.
+-- Its song, volume and range stay with the item when it is picked up.
+Config.Speaker = {
+    model        = 'ba_prop_battle_club_speaker_small',   -- what it looks like
+    links        = { 'https://r2.fivemanage.com/' },       -- the only links it plays: where your songs are uploaded
+    volume       = 100,   -- a new speaker's volume, % (0-200)
+    range        = 30,    -- a new speaker's range, metres
+    maxRange     = 100,   -- the furthest a player may set one to carry, metres (up to 300)
+    maxPerPlayer = 3,     -- speakers one character may have out at once
+    maxPlaced    = 64,    -- speakers out on the whole server at once
+}
+
 -- ---- The world around the voice --------------------------------------------------------------
 --
 -- Voices travel like GTA's own sounds: through the doorways and windows between rooms. Yell inside a
