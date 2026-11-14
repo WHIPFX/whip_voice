@@ -107,7 +107,7 @@ local function sendAllows()
             if Voice.players[s] then
                 TriggerClientEvent('whip_voice:client:allow', s, ids, kbps, rids)
             elseif VoiceBots and VoiceBots.byKey[s] then
-                VoiceBots.allow(s, ids)   -- a bot's list goes to the voice bot service (it has no game)
+                VoiceBots.allow(s, ids, rids)   -- a bot's lists go to the voice bot service (it has no game)
             end
         end
     end
