@@ -83,5 +83,6 @@ files {
 -- in place of GTA's own everywhere it is used. FiveM streams a resource's stream/ folder by itself.
 
 dependency 'whip_core'
+whip_requires '1.0'   -- the whip_core it is built for: the setup report flags an older one
 
 lua54 'yes'
