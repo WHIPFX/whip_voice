@@ -112,8 +112,9 @@ Config.Muffle = {
     door    = 12,   -- a closed door
     window  = 12,   -- a window (the glass lets a little more treble through than a door)
     wall    = 14,   -- a wall or building in the way outdoors, with no way round it
-    around  = 4,    -- something in the way outdoors with a way round or over it close by (a low wall, a crate):
-                    -- this much for a step round it, more the further round (never as much as a wall)
+    around  = 6,    -- outdoors, the sound bending round a corner (a right angle) to reach you: less for a smaller
+                    -- bend (a post is about 1, a corner just passed 2 to 4), a little more for a U-turn; each corner
+                    -- on its way adds its own. How far round it goes is the distance's own fade, not this.
     car     = 9,    -- a closed car's body
 }
 

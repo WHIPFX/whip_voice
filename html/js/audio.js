@@ -398,8 +398,9 @@ window.VoiceAudio = (() => {
             const a = list[id];
             const hz = a && a.f > 0 ? Math.min(22000, a.f) : 22000;
             const g = a && a.g < 0 ? Math.pow(10, a.g / 20) : 1;
-            v.filter.frequency.setTargetAtTime(hz, t, 0.08);
-            v.occ.gain.setTargetAtTime(g, t, 0.08);
+            // Glided over about half a second: walking round a corner dulls the sound smoothly, never in steps.
+            v.filter.frequency.setTargetAtTime(hz, t, 0.15);
+            v.occ.gain.setTargetAtTime(g, t, 0.15);
             // Heard from the doorway it comes out of, over the longer way round.
             v.at = a && Array.isArray(a.at) ? a.at : null;
             v.path = a && a.p > 0 ? a.p : null;

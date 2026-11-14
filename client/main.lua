@@ -658,7 +658,8 @@ startPose = function()
                             else h = GetOffsetFromEntityInWorldCoords(ped, 0.0, 0.0, 0.5) end
                             where[id] = { h.x, h.y, h.z }
                             atOf[id] = where[id]
-                            local every = live[id] and ENV_LIVE_MS or ENV_QUIET_MS
+                            -- (Sound coming out counts as live: a speaker's song changes smoothly as you walk.)
+                            local every = (live[id] or talkers[id]) and ENV_LIVE_MS or ENV_QUIET_MS
                             if not envAt[id] or now - envAt[id] >= every then
                                 -- (A megaphone or a speaker's sound is loud: it gets through a car's cabin.)
                                 due[id] = { ped = ped or 0, head = where[id], range = heardRange[id], loud = heardFx[id] ~= nil }

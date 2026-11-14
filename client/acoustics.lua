@@ -24,8 +24,8 @@ Acoustics.COST = {
     door     = { db = 12, hz = 900  },   -- a closed door
     window   = { db = 12, hz = 1100 },   -- a window: as muffled as a closed door, a little brighter (glass)
     wall     = { db = 14, hz = 800  },   -- a wall with no known way round (line of sight blocked)
-    around   = { db = 4,  hz = 5000 },   -- outdoors, something in the way with a way round it close by: the least it
-                                         -- takes off; the further round, the more (Acoustics.around)
+    around   = { db = 6,  hz = 3000 },   -- outdoors, the sound bending round a corner (a right angle): less for a
+                                         -- smaller bend, a little more for a U-turn (Acoustics.around)
     building = { db = 22, hz = 450  },   -- inside a building the map knows nothing about, you outside
     car      = { db = 9,  hz = 1300 },   -- one of you in a closed car
     cars     = { db = 16, hz = 850  },   -- each in a different closed car
@@ -400,15 +400,37 @@ function Acoustics.through(L, S, interiors, doorOpen, slope, keep, pass)
     return out
 end
 
---- Outdoors, round something or over it: the cost of a way round that adds `extra` metres to the straight line. A step
---- round a low wall takes off COST.around and a little treble; the further round, the more of both, never as much as a
---- wall with no way round.
-function Acoustics.around(extra)
+--- Degrees a way turns at b, going a -> b -> c (0: straight on, 90: a right angle, 180: back the way it came).
+function Acoustics.turn(a, b, c)
+    local ux, uy, uz = b[1] - a[1], b[2] - a[2], b[3] - a[3]
+    local vx, vy, vz = c[1] - b[1], c[2] - b[2], c[3] - b[3]
+    local lu, lv = math.sqrt(ux * ux + uy * uy + uz * uz), math.sqrt(vx * vx + vy * vy + vz * vz)
+    if lu < 1e-6 or lv < 1e-6 then return 0 end
+    local cos = (ux * vx + uy * vy + uz * vz) / (lu * lv)
+    return math.deg(math.acos(math.max(-1, math.min(1, cos))))
+end
+
+--- Outdoors, round something or over it: the cost of the bends on the way, `turns` (degrees, one per bend; or one
+--- number). WHAT A CORNER COSTS IS ITS BEND, NOT THE DISTANCE ROUND IT: the sound loses most where it bends round the
+--- edge, then only what any distance costs (the fade, which the way's length gives). A bend of nothing costs nothing,
+--- so stepping out of sight round a corner dulls it a little at a time: a post about 1 dB, a corner just passed 2 to 4,
+--- a right angle COST.around (its dB and its treble), a U-turn a little more. Each bend on the way adds its own. Never
+--- more than a wall's.
+function Acoustics.around(turns)
     local C = Acoustics.COST
-    local e = math.max(0, tonumber(extra) or 0)
+    if type(turns) ~= 'table' then turns = { turns } end
+    local db, total = 0, 0
+    for _, t in ipairs(turns) do
+        t = math.max(0, tonumber(t) or 0)
+        total = total + t
+        -- 0 straight on, 1 at a right angle, 1.13 back on itself
+        db = db + C.around.db * (1 - math.exp(-t / 45)) / (1 - math.exp(-2))
+    end
+    -- The treble: open for a straight way, COST.around.hz round a right angle, on towards the wall's.
+    local k = math.log((OPEN_HZ - C.wall.hz) / math.max(1, C.around.hz - C.wall.hz)) / 90
     return {
-        db = math.max(0, math.min(C.around.db + 2 * e, C.wall.db - 2)),
-        hz = math.max(C.wall.hz * 1.5, C.around.hz / (1 + 0.6 * e)),
+        db = math.min(C.wall.db, db),
+        hz = C.wall.hz + (OPEN_HZ - C.wall.hz) * math.exp(-k * total),
     }
 end
 
@@ -468,9 +490,22 @@ function Acoustics.voice(L, S, interiors, doorOpen, blocked, slope, keep, pass)
         if out then addRoute(m, out) else add(m, Acoustics.COST.building, 'their building') end
         if inn then addRoute(m, inn); at = portalAt(LI, inn.portals[1])
         else add(m, Acoustics.COST.building, 'your building') end
-    elseif type(blocked) == 'number' then
-        -- Both outside, something between the two heads with a way round it (`blocked`: the metres round).
-        add(m, Acoustics.around(blocked), ('round it, +%.1f m'):format(blocked))
+    elseif type(blocked) == 'table' then
+        -- Both outside, something between the two heads with a way round it (client/environment.lua): its bends
+        -- (`turns`, degrees) and `d` metres more than the straight line; a way further round also its length and the
+        -- bend it is heard from. The louder of that way and straight through the wall wins (each metre further costs
+        -- the voice's own fade, `slope`), so a long way round fades into the wall's muffle rather than jumping to it.
+        local c = Acoustics.around(blocked.turns)
+        local straight = dist(S.pos, L.pos)
+        local W = Acoustics.COST.wall
+        if (blocked.len or straight) * slope + c.db <= straight * slope + W.db then
+            local total = 0
+            for _, t in ipairs(blocked.turns or {}) do total = total + t end
+            if c.db >= 0.05 then add(m, c, ('round it, %d deg, +%.1f m'):format(math.floor(total + 0.5), blocked.d or 0)) end
+            at, p = blocked.at, blocked.at and blocked.len or nil
+        else
+            add(m, W, 'wall')
+        end
     elseif blocked then
         -- Both outside, something solid between the two heads, no way round.
         add(m, Acoustics.COST.wall, 'wall')

@@ -36,6 +36,7 @@ server_scripts {
 
 client_scripts {
     'client/acoustics.lua',     -- how a voice travels: the rules (pure)
+    'client/ways.lua',          -- the way round outdoors: the open ground as a grid, the shortest way through it
     'client/environment.lua',   -- reading the world for them: rooms, doorways, doors, cars, water
     'client/main.lua',
     'client/megaphone.lua',     -- the megaphone item: its emote, and when it ends
