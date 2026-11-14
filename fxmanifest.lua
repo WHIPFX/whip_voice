@@ -4,7 +4,7 @@ game 'gta5'
 name 'whip_voice'
 author 'Whippy'
 description 'Voice chat on a voice server of its own: voices placed in 3D, and voice effects'
-version '0.2.0'
+version '0.3.0'
 whip_updates 'WHIPFX/whip_voice'   -- whip_core checks this repository's releases for a newer version
 
 -- HOW IT WORKS: each player's game sends their microphone to a voice server (LiveKit), which passes it on to
