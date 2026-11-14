@@ -84,7 +84,7 @@ local function applyTalk()
     if on == talking and radio == onRadio then return end
     local radioChanged = radio ~= onRadio
     talking, onRadio = on, radio
-    Whip.call('SetVoiceTalking', on, radio and 'radio' or nil)    -- the HUD: blue, or orange with a radio
+    Whip.core:SetVoiceTalking(on, radio and 'radio' or nil)    -- the HUD: blue, or orange with a radio
     SendNUIMessage({ action = 'talk', on = on, radio = radio })   -- the page opens or closes the microphone
     if radioChanged and WalkieTalking then WalkieTalking(radio) end   -- the hand to the shoulder mic (radio.lua)
 end
@@ -93,7 +93,7 @@ end
 function VoiceTalkRefresh() applyTalk() end
 
 local function canTalk()
-    if not Config.DeadCanTalk and Whip.call('IsPlayerDead') == true then return false end
+    if not Config.DeadCanTalk and Whip.core:IsPlayerDead() == true then return false end
     return true
 end
 
@@ -199,7 +199,7 @@ local function noiseSuppression()
 end
 
 local function sendRange()
-    local name = Whip.call('GetVoiceName')
+    local name = Whip.core:GetVoiceName()
     if type(name) == 'string' then TriggerServerEvent('whip_voice:server:setRange', name:lower()) end
 end
 
@@ -212,7 +212,7 @@ local function connect()
     if connecting or joining or not wantVoice then return end
     -- Another voice resource is the voice system: this one stays off, and FiveM's own
     -- voice is left as it is (whip_core client/voice_system.lua).
-    local v = Whip.call('GetVoiceSystem')
+    local v = Whip.core:GetVoiceSystem()
     if type(v) == 'table' and v.resource ~= GetCurrentResourceName() then
         if not toldOff then print(('[whip_voice] %s is the voice system: whip_voice stays off'):format(tostring(v.resource))) end
         toldOff = true
@@ -220,7 +220,7 @@ local function connect()
     end
     connecting = true
     CreateThread(function()
-        local data, why = Whip.call('Callback', 'whip_voice:token')
+        local data, why = Whip.core:Callback('whip_voice:token')
         connecting = false
         if type(data) ~= 'table' or not data.token then
             lastError = 'the server gave no pass into voice: ' .. tostring(why or data)
@@ -274,7 +274,7 @@ end)
 
 -- Started while a character is already loaded (whip_voice restarted: every player at once).
 Whip.register(function()
-    if Whip.call('IsPlayerLoaded') == true and not joined then
+    if Whip.core:IsPlayerLoaded() == true and not joined then
         wantVoice = true
         connectLater(0)
     end
@@ -300,11 +300,11 @@ end
 RegisterCommand('voicevolume', function(_, args)
     local n = tonumber(args[1] or '')
     if not n then
-        Whip.call('Notify', ('Voice volume (the people around you) is %d%%. Type /voicevolume and a number from 0 to 200 to change it (100 is normal).'):format(volume), 'info', 6000)
+        Whip.core:Notify(('Voice volume (the people around you) is %d%%. Type /voicevolume and a number from 0 to 200 to change it (100 is normal).'):format(volume), 'info', 6000)
         return
     end
     setVolume(n)
-    Whip.call('Notify', ('Voice volume: %d%%'):format(volume), 'success')
+    Whip.core:Notify(('Voice volume: %d%%'):format(volume), 'success')
 end, false)
 
 -- THE PAUSE MENU'S SERVER SETTINGS (whip_core client/player_prefs.lua; Josh, 10 Oct 2026): the same volume as
@@ -452,13 +452,13 @@ RegisterNUICallback('mic', function(d, cb)
     if d.state == 'waiting' then
         -- FiveM's "allow the microphone" box has had no answer. It only takes the mouse with the F8 console open
         -- (Legacy and Enhanced alike), which players rarely guess.
-        Whip.call('Notify', 'Voice: FiveM is asking to use your microphone. Open the F8 console, then click Allow in its box. You can hear voice meanwhile.', 'info')
+        Whip.core:Notify('Voice: FiveM is asking to use your microphone. Open the F8 console, then click Allow in its box. You can hear voice meanwhile.', 'info')
         print('[whip_voice] the microphone permission box has had no answer for 15 s')
     elseif d.state == 'denied' then
-        Whip.call('Notify', 'Voice: no microphone access, so you can hear but not talk. Allow the microphone for this server in FiveM and reconnect.', 'error')
+        Whip.core:Notify('Voice: no microphone access, so you can hear but not talk. Allow the microphone for this server in FiveM and reconnect.', 'error')
         print('[whip_voice] microphone refused: ' .. tostring(d.detail))
     elseif d.state == 'ended' or d.state == 'error' then
-        Whip.call('Notify', 'Voice: your microphone stopped (' .. tostring(d.detail) .. ')', 'error')
+        Whip.core:Notify('Voice: your microphone stopped (' .. tostring(d.detail) .. ')', 'error')
     end
     cb('ok')
 end)

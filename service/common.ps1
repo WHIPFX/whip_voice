@@ -26,11 +26,23 @@ function Test-Admin {
 }
 
 # --- NSSM (runs a program as a Windows service) ---------------------------------------------------
+# SHA-256 of NSSM 2.24's win64\nssm.exe, from the zip install.ps1 downloads and checks ($NssmZipSha there): change
+# the two together.
+$script:NssmExeSha = 'f689ee9af94b00e9e3f0bb072b34caaf207f32dcb4f5782fc9ca351df9a06c97'
+
+#--- An nssm.exe already on this machine, or $null. Only NSSM 2.24's own file is used: both scripts run it as
+#    administrator, and older versions of the setup wizard downloaded it without a check.
 function Find-Nssm([string]$alsoIn = '') {
-    $places = @('C:\Caddy\tools\nssm\nssm-2.24\win64\nssm.exe', 'C:\LiveKit\tools\nssm\nssm-2.24\win64\nssm.exe',
-                'C:\KickSubathonTimer\tools\nssm\nssm-2.24\win64\nssm.exe')
+    $places = @('C:\Caddy\tools\nssm\nssm-2.24\win64\nssm.exe', 'C:\LiveKit\tools\nssm\nssm-2.24\win64\nssm.exe')
     if ($alsoIn) { $places += (Join-Path $alsoIn 'tools\nssm\nssm-2.24\win64\nssm.exe') }
-    foreach ($p in $places) { if (Test-Path $p) { return $p } }
+    foreach ($p in $places) {
+        if (-not (Test-Path $p)) { continue }
+        if ((Get-FileHash -Path $p -Algorithm SHA256).Hash.ToLower() -ne $script:NssmExeSha) {
+            Warn "$p is not NSSM 2.24's own nssm.exe (its checksum differs): not used"
+            continue
+        }
+        return $p
+    }
     return $null
 }
 

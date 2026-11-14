@@ -49,15 +49,15 @@ local held = nil   -- the emote we started
 
 local function takeOut()
     local emote = (Config.Radio or {}).holdEmote
-    if type(emote) ~= 'string' or emote == '' or Whip.call('IsEmoting') then return end
-    Whip.call('FreeHands')
+    if type(emote) ~= 'string' or emote == '' or Whip.core:IsEmoting() then return end
+    Whip.core:FreeHands()
     -- FreeHands waits for the holster: the radio put away meanwhile gets no radio in the hand afterwards.
     if not open then return end
-    if Whip.call('PlayEmote', emote) == true then held = emote end
+    if Whip.core:PlayEmote(emote) == true then held = emote end
 end
 
 local function putBack()
-    if held and Whip.call('IsEmoting') == held then Whip.call('CancelEmote') end
+    if held and Whip.core:IsEmoting() == held then Whip.core:CancelEmote() end
     held = nil
 end
 
@@ -70,8 +70,8 @@ local function close()
     end
     putBack()
     screen:close()
-    Whip.call('UnblockControls', 'whip_voice_walkie')
-    Whip.call('SetUIOpen', false, 'walkie')
+    Whip.core:UnblockControls('whip_voice_walkie')
+    Whip.core:SetScreenOpen(false, 'walkie')
     SendNUIMessage({ action = 'walkieClose' })
 end
 
@@ -79,10 +79,10 @@ RegisterNetEvent('whip_voice:client:walkie', function(s)
     if open then close() return end
     if type(s) ~= 'table' then return end
     -- Used from the inventory: the inventory makes way (the radio is not drawn over it).
-    if Whip.call('IsInventoryOpen') == true then Whip.call('CloseInventory') end
+    if Whip.core:IsInventoryOpen() == true then Whip.core:CloseInventory() end
     open = true
-    Whip.call('SetUIOpen', true, 'walkie')       -- whip's HUD and prompts make way
-    local blocked, why = Whip.call('BlockControls', 'whip_voice_walkie', BLOCK)
+    Whip.core:SetScreenOpen(true, 'walkie')       -- whip's HUD and prompts make way
+    local blocked, why = Whip.core:BlockControls('whip_voice_walkie', BLOCK)
     if blocked ~= true and not blockWarned and GetResourceState('whip_core') == 'started' then
         blockWarned = true
         print(('^3[whip_voice] the radio could not hold the controls off: %s^7'):format(tostring(why)))
@@ -160,7 +160,7 @@ end)
 -- The 3D radio could not be built (no WebGL, a file missing): said, and put away.
 RegisterNUICallback('walkieError', function(d, cb)
     print('[whip_voice] the radio on the screen could not load: ' .. tostring(d.detail))
-    Whip.call('Notify', 'The radio could not be shown on your screen (F8 says why).', 'error')
+    Whip.core:Notify('The radio could not be shown on your screen (F8 says why).', 'error')
     close()
     cb('ok')
 end)

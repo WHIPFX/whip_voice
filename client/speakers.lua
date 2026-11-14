@@ -26,7 +26,7 @@ local mounted = {}       -- [id] = where its prompt was put (a key), while it is
 
 RegisterNetEvent('whip_voice:client:placeSpeaker', function(model)
     CreateThread(function()
-        local spot, why = Whip.call('PlaceObject', model, { label = 'Speaker', vehicles = true })
+        local spot, why = Whip.core:PlaceObject(model, { label = 'Speaker', vehicles = true })
         if not spot then
             if why ~= 'cancelled' then print('[whip_voice] the speaker was not put down: ' .. tostring(why)) end
             return
@@ -113,7 +113,7 @@ local function actionFor(v)
                 onSelect = function(ctx)
                     if not cur() then return ctx.refuse('That speaker is gone') end
                     local links = S.links or { 'https://r2.fivemanage.com/' }
-                    local answer = Whip.call('Input', 'Speaker', {
+                    local answer = Whip.core:Input('Speaker', {
                         { label = 'Song link', type = 'text', required = true,
                           placeholder = tostring(links[1]) .. '.../song.mp3' },
                     })
@@ -176,14 +176,14 @@ local function take(views)
     list = now
     for id, key in pairs(mounted) do
         if not now[id] then
-            Whip.call('RemoveAction', 'speaker:' .. id)
+            Whip.core:RemoveAction('speaker:' .. id)
             mounted[id] = nil
         end
     end
     for id, v in pairs(now) do
         local key = whereKey(v)
         if mounted[id] ~= key then
-            local ok, why = Whip.call('AddAction', actionFor(v))
+            local ok, why = Whip.core:AddAction(actionFor(v))
             if ok then mounted[id] = key
             else print(('[whip_voice] speaker %d\'s prompt could not be put up: %s'):format(id, tostring(why))) end
         end
@@ -197,7 +197,7 @@ RegisterNetEvent('whip_voice:client:speakers', take)
 Whip.register(function()
     mounted = {}
     CreateThread(function()
-        local views = Whip.call('Callback', 'whip_voice:speakers')
+        local views = Whip.core:Callback('whip_voice:speakers')
         if type(views) == 'table' then take(views) end
     end)
 end)

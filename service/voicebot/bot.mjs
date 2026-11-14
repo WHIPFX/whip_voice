@@ -31,8 +31,9 @@
 //
 // RECORDINGS come only from the link starts in config.json (`audioLinks`, Fivemanage by default), a plain address
 // after it, no redirects, or from an mp3/ogg/wav file on this machine that a FiveM resource ships ("file:<path>",
-// whip_voice's "@resource/path"). At most `maxBytes` and `maxSeconds`, or for music (a speaker's song) `musicBytes`
-// and `musicSeconds`. Each one is read once and kept for the next call.
+// whip_voice's "@resource/path"). Either way it is mp3, Ogg Vorbis, Ogg Opus or wav (DECODERS below). At most
+// `maxBytes` and `maxSeconds`, or for music (a speaker's song) `musicBytes` and `musicSeconds`. Each one is read once
+// and kept for the next call.
 //
 // config.json (written by whip_voice's setup wizard): listen, token, maxCalls, audioLinks, maxSeconds, maxBytes,
 // musicSeconds and musicBytes (optional: 600 s and 40 MB), and
@@ -49,7 +50,7 @@ import { Room, RoomEvent, AudioSource, AudioFrame, AudioResampler, AudioResample
     TrackPublishOptions, TrackSource } from '@livekit/rtc-node';
 import { FfiRequest, FfiResponse, livekitFfiRequest, SetTrackSubscriptionPermissionsRequest, ParticipantTrackPermission,
     LocalTrackMuteRequest } from '@livekit/rtc-ffi-bindings';
-import decode from '@audio/decode';
+import audioType from 'audio-type';
 import { AgentHost } from './agent/index.mjs';
 import { concat } from './agent/audio.mjs';
 
@@ -215,11 +216,32 @@ async function download(url, lim) {
     }
 }
 
+// THE FORMATS a recording may be in, each with its own decoder, loaded the first time one is needed. Only these four:
+// @audio/decode, which reads every format there is, also brought in GPL decoders (AAC, AC-3, DTS) for formats no
+// recording here needs. (The MP3 one, mpg123-decoder, says MIT but is libmpg123, LGPL-2.1, built to WebAssembly.)
+// audio-type tells the four apart by their first bytes; its 'oga' is Ogg Vorbis (Ogg Opus is 'opus').
+const DECODERS = {
+    mp3: () => import('@audio/decode-mp3'),
+    oga: () => import('@audio/decode-vorbis'),
+    opus: () => import('@audio/decode-opus'),
+    wav: () => import('@audio/decode-wav'),
+};
+
+async function decode(bytes) {
+    // A copy, as its own ArrayBuffer: audio-type reads `.buffer` from the start, and a Node Buffer is often a view
+    // into a bigger shared one.
+    const data = new Uint8Array(bytes);
+    const load = DECODERS[audioType(data)];
+    if (!load) throw new Error('not a recording this can read (mp3, ogg or wav)');
+    return (await load()).default(data);
+}
+
 /** The recording as 48 kHz mono 16-bit samples. */
 async function toPcm(bytes, lim) {
-    const { channelData, sampleRate } = await decode(bytes);
+    const { channelData, sampleRate, samplesDecoded } = await decode(bytes);
     if (!channelData || !channelData.length || !sampleRate) throw new Error('not a recording this can read');
-    const n = channelData[0].length;
+    // A decoder's buffers can run past what it decoded: only the decoded samples count.
+    const n = Math.min(channelData[0].length, samplesDecoded ?? Infinity);
     if (n / sampleRate > lim.seconds) throw tooLong(lim);
     const mono = new Int16Array(n);
     for (let i = 0; i < n; i++) {

@@ -68,7 +68,7 @@ function VoiceCheck.run(say)
     say('whip_voice: checking voice from the game\'s side', 'head')
 
     -- 1. The voice system.
-    local v = Whip.call('GetVoiceSystem')
+    local v = Whip.core:GetVoiceSystem()
     if type(v) == 'table' and v.resource ~= RESOURCE then
         bad(('%s is the voice system, so whip_voice is off'):format(tostring(v.resource)),
             ('take "ensure %s" out of server.cfg and restart the server (only one voice system can run)'):format(tostring(v.resource)))
@@ -136,10 +136,10 @@ function VoiceCheck.run(say)
     end
 
     -- 4. Every player's game.
-    local players = Whip.call('GetPlayers', { light = true })
+    local players = Whip.core:GetPlayers({ light = true })
     local list = {}
-    for src in pairs(type(players) == 'table' and players or {}) do
-        src = tonumber(src)
+    for key in pairs(type(players) == 'table' and players or {}) do
+        local src = tonumber(key)
         if src and GetPlayerName(src) then list[#list + 1] = src end
     end
     if #list == 0 then

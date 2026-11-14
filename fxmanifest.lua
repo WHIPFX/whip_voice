@@ -4,7 +4,8 @@ game 'gta5'
 name 'whip_voice'
 author 'Whippy'
 description 'Voice chat on a voice server of its own: voices placed in 3D, and voice effects'
-version '0.1.0'
+version '0.3.0'
+whip_updates 'WHIPFX/whip_voice'   -- whip_core checks this repository's releases for a newer version
 
 -- HOW IT WORKS: each player's game sends their microphone to a voice server (LiveKit), which passes it on to
 -- the players near them. This FiveM server never carries audio; it decides who may hear whom. The voice server
@@ -64,11 +65,15 @@ files {
     'html/js/voice.js',
     'html/js/walkie.js',
     'html/js/vendor/livekit-client.umd.js',
+    -- Its licence and notices go wherever it goes (Apache 2.0, and the MIT and BSD parts built into it).
+    'html/js/vendor/livekit-client.LICENSE.txt',
+    'html/js/vendor/livekit-client.NOTICE.txt',
     -- The 3D radio (3D Clanker's module) and three.js r170, which draws it.
     'html/radio3d/radio.js',
     'html/radio3d/lcd.js',
     'html/radio3d/radio.glb',
     'html/radio3d/lib/build/three.module.min.js',
+    'html/radio3d/lib/LICENSE',     -- three.js's MIT licence: the files from its examples folder carry no header
     'html/radio3d/lib/examples/jsm/controls/OrbitControls.js',
     'html/radio3d/lib/examples/jsm/environments/RoomEnvironment.js',
     'html/radio3d/lib/examples/jsm/loaders/GLTFLoader.js',
@@ -81,5 +86,6 @@ files {
 -- in place of GTA's own everywhere it is used. FiveM streams a resource's stream/ folder by itself.
 
 dependency 'whip_core'
+whip_requires '1.0'   -- the whip_core it is built for: the setup report flags an older one
 
 lua54 'yes'

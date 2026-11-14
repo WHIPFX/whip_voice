@@ -8,8 +8,8 @@
 -- service instead of a player's game.
 --
 --   exports.whip_voice:CreateVoiceBot({ name, audio })        -> botKey, durationMs | false, why  (WAITS)
---       audio: a recording's link (the voice bot's accepted sites, Fivemanage by default), or an mp3/ogg/wav file a
---       started resource ships, "@my_story/audio/line.ogg" (never downloaded by players)
+--       audio: an mp3/ogg/wav recording: a link to one (the voice bot's accepted sites, Fivemanage by default), or a
+--       file a started resource ships, "@my_story/audio/line.ogg" (never downloaded by players)
 --   exports.whip_voice:PutVoiceBotOnLine(botKey, lineId)       -> true | false, why
 --   exports.whip_voice:PlayVoiceBot(botKey, onDone)            -> durationMs | false, why  (WAITS)
 --       onDone(botKey, why): 'done' (played to the end), 'removed', 'lineClosed', 'failed'

@@ -79,10 +79,10 @@ function WalkieTalking(on)
     local emote = R.talkEmote
     if type(emote) ~= 'string' or emote == '' then return end
     if on then
-        if Whip.call('IsEmoting') then return end
-        emoteMine = Whip.call('PlayEmote', emote) == true
+        if Whip.core:IsEmoting() then return end
+        emoteMine = Whip.core:PlayEmote(emote) == true
     elseif emoteMine then
         emoteMine = false
-        if Whip.call('IsEmoting') == emote then Whip.call('CancelEmote') end
+        if Whip.core:IsEmoting() == emote then Whip.core:CancelEmote() end
     end
 end
