@@ -10,6 +10,7 @@
 #     powershell -ExecutionPolicy Bypass -File install.ps1
 #
 # What it does, step by step (safe to run again: it keeps your keys, and a step already done is skipped):
+#   First, NSSM, which runs the services below: downloaded (checked) unless this machine has the same file already
 #   1. works out this server's public address: the voice address players' games connect to (no domain needed).
 #      With -Domain, a domain name instead; a re-run keeps the address set up last time
 #   2. a domain only: shows you the DNS record to add, and waits until the internet can see it
@@ -68,6 +69,13 @@ $NodeVersion = '22.19.0'
 $NodeZipUrl  = "https://nodejs.org/dist/v$NodeVersion/node-v$NodeVersion-win-x64.zip"
 $NodeZipSha  = 'ea3fad0e67a991d8477d8c01344b56e69c676ccb733f065b22436994b1253f86'   # SHA-256, from the release's SHASUMS256.txt
 
+# nssm.cc publishes only a SHA-1 for this zip (be7b3577c6e3a280e5106a9e9db5b3775931cefc, on nssm.cc/download). The
+# SHA-256 below is of the file with that SHA-1, and Chocolatey's nssm 2.24 package publishes the same one.
+$NssmVersion = '2.24'
+$NssmZipUrl  = "https://nssm.cc/release/nssm-$NssmVersion.zip"
+$NssmZipSha  = '727d1e42275c605e0f04aba98095c38a8e1e46def453cdffce42869428aa6743'   # SHA-256 of the zip
+# (Its nssm.exe's own SHA-256 is $NssmExeSha in common.ps1, which checks a copy already on this machine.)
+
 $ServiceName = 'LiveKit'
 $Exe         = Join-Path $InstallDir 'livekit-server.exe'
 $Config      = Join-Path $InstallDir 'config.yaml'
@@ -96,16 +104,24 @@ if (-not (Test-Admin)) {
 }
 
 # --- NSSM (runs a program as a Windows service) ---------------------------------------------------
+# It runs as administrator here, so it is checked like every download. A copy already on this machine is checked as
+# well (Find-Nssm): older versions of this wizard downloaded it without a check.
 $Nssm = Find-Nssm $InstallDir
 if (-not $Nssm) {
-    Say 'Downloading NSSM (it runs the voice server as a Windows service)...' 'Yellow'
+    Say "Downloading NSSM $NssmVersion (it runs the voice server as a Windows service)..." 'Yellow'
     $dir = Join-Path $InstallDir 'tools\nssm'
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
-    $zip = Join-Path $env:TEMP 'nssm-2.24.zip'
-    Invoke-WebRequest -Uri 'https://nssm.cc/release/nssm-2.24.zip' -OutFile $zip -UseBasicParsing
+    $zip = Join-Path $env:TEMP "nssm-$NssmVersion.zip"
+    Invoke-WebRequest -Uri $NssmZipUrl -OutFile $zip -UseBasicParsing
+    $hash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash.ToLower()
+    if ($hash -ne $NssmZipSha) {
+        Remove-Item $zip -Force
+        throw "The NSSM download does not match its checksum (got $hash). Nothing was installed."
+    }
+    Good 'the download matches the official release'
     Expand-Archive -Path $zip -DestinationPath $dir -Force
     Remove-Item $zip -Force
-    $Nssm = Join-Path $dir 'nssm-2.24\win64\nssm.exe'
+    $Nssm = Join-Path $dir "nssm-$NssmVersion\win64\nssm.exe"
 }
 # NSSM writes harmless messages to stderr (e.g. "service not running"); run those through cmd so
 # PowerShell 5.1 does not treat them as errors.
