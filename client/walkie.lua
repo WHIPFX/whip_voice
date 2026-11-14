@@ -71,7 +71,7 @@ local function close()
     putBack()
     screen:close()
     Whip.core:UnblockControls('whip_voice_walkie')
-    Whip.core:SetUIOpen(false, 'walkie')
+    Whip.core:SetScreenOpen(false, 'walkie')
     SendNUIMessage({ action = 'walkieClose' })
 end
 
@@ -81,7 +81,7 @@ RegisterNetEvent('whip_voice:client:walkie', function(s)
     -- Used from the inventory: the inventory makes way (the radio is not drawn over it).
     if Whip.core:IsInventoryOpen() == true then Whip.core:CloseInventory() end
     open = true
-    Whip.core:SetUIOpen(true, 'walkie')       -- whip's HUD and prompts make way
+    Whip.core:SetScreenOpen(true, 'walkie')       -- whip's HUD and prompts make way
     local blocked, why = Whip.core:BlockControls('whip_voice_walkie', BLOCK)
     if blocked ~= true and not blockWarned and GetResourceState('whip_core') == 'started' then
         blockWarned = true
