@@ -103,6 +103,7 @@ Config.Speaker = {
     volume       = 100,   -- a new speaker's volume, % (0-200)
     range        = 30,    -- a new speaker's range, metres
     maxRange     = 300,   -- the furthest a player may set one to carry, metres (300 at most)
+    drawDistance = 300,   -- how far away a speaker is seen, metres (up to 500)
     maxPerPlayer = 3,     -- speakers one character may have out at once
     maxPlaced    = 64,    -- speakers out on the whole server at once
 }

@@ -92,9 +92,11 @@ local function broadcast() TriggerClientEvent('whip_voice:client:speakers', -1, 
 
 local function vec(t) return vector3(t[1] + 0.0, t[2] + 0.0, t[3] + 0.0) end
 
---- Its prop for everyone (a prop set of one; on a car, attached to it).
+--- Its prop for everyone (a prop set of one; on a car, attached to it), seen from as far as it can be heard
+--- (Config.Speaker.drawDistance: past its model's own 100 m and whip's usual 150 m).
+local DRAW = math.max(1, math.min(500, math.floor(tonumber(S.drawDistance) or 300)))
 local function show(s)
-    local prop = { model = s.model, coords = vec(s.coords), rot = vec(s.rot) }
+    local prop = { model = s.model, coords = vec(s.coords), rot = vec(s.rot), drawDistance = DRAW }
     if s.car then
         prop.attach, prop.attachOffset, prop.attachRot = { net = s.car.net }, vec(s.car.offset), vec(s.car.rot)
     end
