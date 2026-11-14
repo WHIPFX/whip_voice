@@ -124,6 +124,7 @@ Changed the ports? Open those instead: `"Open voice ports.bat" -Udp 7982-7993 -T
 | can hear but not talk | That player's game has no microphone: FiveM's box unanswered, or refused | They open F8 and click Allow in the box; refused earlier, they allow it in FiveM's settings and reconnect |
 | A Phone Call card: "only links starting with ... are accepted" | The recording is not on Fivemanage | Put the file in a resource and use `@resource/file.ogg` (below), upload it to Fivemanage, or add the site to `Config.VoiceBot.audioLinks` |
 | A Phone Call card: "there is no ..." / "cannot be read" | The `@resource/...` file is not where it says | Check the path inside the resource |
+| A Phone Call card: "not a recording this can read" | The recording is not mp3, ogg (Vorbis or Opus) or wav: an m4a or FLAC file, say | Save it as ogg or mp3 and use that |
 
 **Recordings in a resource** (a story you sell or share, say): put the mp3/ogg/wav files in the resource, like
 `my_story/audio/irwin_intro.ogg`, and name them `@my_story/audio/irwin_intro.ogg` in a Phone Call card (or
@@ -286,6 +287,7 @@ into its own server.cfg. Each server makes a voice room of its own every time it
 | the voice bot is running, but this server.cfg has no whip_voicebot_token line | The bot is set up; this server.cfg never got its line | Run the setup from this server's `whip_voice\service`: it writes the line into its server.cfg |
 | A Phone Call card: "only links starting with ... are accepted" | The recording is not on Fivemanage | Put the file in a resource and use `@resource/file.ogg` (below), upload it to Fivemanage, or add the other site (below) |
 | A Phone Call card: "there is no ..." / "cannot be read" | The `@resource/...` file is not where it says, or Windows will not let the bot read it | Check the path inside the resource; the resources folder must be readable by "Users" (it is by default) |
+| A Phone Call card: "not a recording this can read" | The recording is not mp3, ogg (Vorbis or Opus) or wav: an m4a or FLAC file, say | Save it as ogg or mp3 and use that |
 
 ### Later
 

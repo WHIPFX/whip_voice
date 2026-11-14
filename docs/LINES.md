@@ -120,7 +120,7 @@ hears the line, and nobody near anyone hears it except through a member's device
 
 | Export | What it does |
 |---|---|
-| `CreateVoiceBot({ name, audio })` | Joins the voice room and gets the recording ready. `audio`: an mp3/ogg/wav file a started resource ships, `"@my_story/audio/line.ogg"` (players never download it), or a link on a site the bot accepts (Fivemanage unless the server added more). WAITS. Answers `botKey, durationMs`, or `false, why` (the bot's own words for a refused one). |
+| `CreateVoiceBot({ name, audio })` | Joins the voice room and gets the recording ready. `audio`: an mp3/ogg/wav file a started resource ships, `"@my_story/audio/line.ogg"` (players never download it), or a link to one on a site the bot accepts (Fivemanage unless the server added more). WAITS. Answers `botKey, durationMs`, or `false, why` (the bot's own words for a refused one). |
 | `PutVoiceBotOnLine(botKey, lineId)` | Puts it on one of your lines. It counts as a member (`minMembers`). |
 | `PlayVoiceBot(botKey, onDone)` | Plays it once. WAITS a moment. `onDone(botKey, why)`: `'done'` (to the end), `'removed'`, `'lineClosed'`, `'failed'`. |
 | `RemoveVoiceBot(botKey)` | Lets it go (off its line, out of the room). Gone already is fine. |

@@ -615,7 +615,7 @@ function Install-VoiceBot {
             New-Item -ItemType Directory -Path (Split-Path $dst) -Force | Out-Null
             Copy-Item (Join-Path $BotSource $f) $dst -Force
         }
-        Say '  Installing its packages (LiveKit''s own SDK and an audio decoder)...'
+        Say '  Installing its packages (LiveKit''s own SDK and the audio decoders)...'
         $oldPath = $env:Path
         $env:Path = "$BotNode;$env:Path"
         Push-Location $BotApp
