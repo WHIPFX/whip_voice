@@ -506,6 +506,21 @@ window.VoiceAudio = (() => {
     const GLIDE_JUMP = 3.0;     // metres in one pose
     const GLIDE_TAU = 0.25;     // seconds
 
+    // A BRANCH QUIET A WHILE STARTS AGAIN WHERE IT IS NEXT HEARD FROM, with no slide: nothing was heard from it in
+    // between (its way taken up again at another corner, or its first way back after the second carried the sound:
+    // client/environment.lua keepSides).
+    const QUIET = 0.02;          // a branch's muffle volume at or below this: silent
+    const QUIET_MS = 400;        // ...for this long: faded out
+
+    /** A branch's (a voice's, or its second way's) new muffle volume `g`, with when it went quiet. */
+    function quieted(h, g) {
+        const now = performance.now();
+        const faded = h.occTo <= QUIET && h.quietSince > 0 && now - h.quietSince > QUIET_MS;
+        if (g <= QUIET) { if (!(h.occTo <= QUIET) || !h.quietSince) h.quietSince = now; }
+        else { h.quietSince = 0; if (faded) h.gPos = null; }
+        h.occTo = g;
+    }
+
     /** Where `h` (a voice, or its second way) seems to come from now, towards `target`, glided. */
     function glided(h, target, t) {
         if (!h.gPos) { h.gPos = target.slice(0, 3); h.gT = t; return h.gPos; }
@@ -631,7 +646,7 @@ window.VoiceAudio = (() => {
             // Glided over about half a second: walking round a corner dulls the sound smoothly, never in steps.
             v.filter.frequency.setTargetAtTime(hz, t, 0.15);
             v.occ.gain.setTargetAtTime(g, t, 0.15);
-            v.occTo = g;                         // (its muffle, for its share among its group: shareGroups)
+            quieted(v, g);                       // (occTo: its muffle, for its share among its group: shareGroups)
             // Heard from the doorway it comes out of, over the longer way round.
             v.at = a && Array.isArray(a.at) ? a.at : null;
             v.path = a && a.p > 0 ? a.p : null;
@@ -642,14 +657,14 @@ window.VoiceAudio = (() => {
                     const g2 = Math.pow(10, Math.min(0, a.g2) / 20);
                     alt.filter.frequency.setTargetAtTime(Math.min(22000, a.f2 > 0 ? a.f2 : 22000), t, 0.15);
                     alt.occ.gain.setTargetAtTime(g2, t, 0.15);
-                    alt.occTo = g2;
+                    quieted(alt, g2);
                     alt.at = a.at2;
                     alt.path = a.p2 > 0 ? a.p2 : null;
                     alt.quietAt = 0;
                     hookAlt(v, true);
                 } else if (v.alt && v.alt.occTo > 0) {
                     v.alt.occ.gain.setTargetAtTime(0, t, 0.15);
-                    v.alt.occTo = 0;
+                    quieted(v.alt, 0);
                     v.alt.quietAt = performance.now();
                 }
             }

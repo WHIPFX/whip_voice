@@ -428,6 +428,59 @@ local function secondWay(id, from, to, own, range, pass, first)
     return answer2(nil, true)
 end
 
+-- MUSIC'S TWO WAYS KEEP TO THEIR OWN BRANCH ON THE PAGE. The first way is whichever is best, and walking on, the two
+-- can change places (the second's opening becomes the best): sent as they came, each of the page's two branches slid
+-- across to the other's corner at once and the sound swung through the space between them (the voice simulator, 14 Nov
+-- 2026). So each way goes to the branch that last played it: by its direction from the listener (one opening's corner
+-- is found a few metres along it from one pass to the next) and how loud it is (two corners one behind the other, seen
+-- the same way, are told apart by it): two that changed places are swapped back, and one way left at the second's corner
+-- stays the second while the first goes quiet where it was. A quiet branch takes any way (html/js/audio.js: a branch
+-- quiet a while starts again where it is next heard from, with no slide).
+local SAME_DEG = 30                     -- degrees: a corner this near (seen from the listener) where a branch played is its
+local PER_DB = 1.5                      -- degrees of difference a dB of difference counts as, telling ways apart
+local QUIET = -45                       -- dB: a branch with nothing to play
+local sides = {}                        -- [identity] = { at, p, f, at2, l1, l2, quiet }: what the page's two branches last played
+
+local function swapSides(a)
+    a.g, a.f, a.at, a.p, a.g2, a.f2, a.at2, a.p2 = a.g2, a.f2, a.at2, a.p2, a.g, a.f, a.at, a.p
+end
+
+local function keepSides(id, a, head, ear, slope)
+    local k = sides[id]
+    local A, B = a.at, a.at2
+    local quiet = false
+    -- Degrees between two places seen from the listener (nil: the voice itself).
+    local function apart(x, y)
+        x, y = x or head, y or head
+        local a1 = math.atan(x[2] - ear[2], x[1] - ear[1])
+        local a2 = math.atan(y[2] - ear[2], y[1] - ear[1])
+        return math.deg(math.abs(((a2 - a1 + math.pi) % (2 * math.pi)) - math.pi))
+    end
+    -- How loud a way is here: its muffle and its length's fade.
+    local straight = length(head, ear)
+    local function level(g, p) return (g or 0) - slope * (p or straight) end
+    local lA, lB = level(a.g, a.p), B and level(a.g2, a.p2) or nil
+    if k then
+        local P1, P2 = k.at, k.at2
+        local function cost(x, lx, P, lP, free)
+            if free then return 0 end
+            return apart(x, P) + PER_DB * math.abs(lx - lP)
+        end
+        if A and B then
+            local stay = cost(A, lA, P1, k.l1, k.quiet) + cost(B, lB, P2, k.l2, not P2)
+            local cross = cost(B, lB, P1, k.l1, k.quiet) + cost(A, lA, P2, k.l2, not P2)
+            if cross + 5 < stay then swapSides(a) end
+        elseif A and P2 and apart(A, P2) < SAME_DEG and (k.quiet or cost(A, lA, P2, k.l2) < cost(A, lA, P1, k.l1)) then
+            a.g2, a.f2, a.at2, a.p2 = a.g, a.f, a.at, a.p
+            a.g, a.f, a.at, a.p = QUIET, k.f, P1, k.p
+            quiet = true
+        end
+    end
+    sides[id] = { at = a.at, p = a.p, f = a.f, at2 = a.at2, quiet = quiet,
+                  l1 = level(a.g, a.p), l2 = a.at2 and level(a.g2, a.p2) or nil }
+    return a
+end
+
 local function learn(d)
     if d.int == 0 then return end
     local I = readInterior(d.int)
@@ -478,11 +531,14 @@ function Environment.update(me, speakers, heard)
         local ints = {}
         if L.int ~= 0 then ints[L.int] = interiors[L.int] or nil end
         if S.int ~= 0 then ints[S.int] = interiors[S.int] or nil end
-        local a = Acoustics.voice(L, S, ints, doorOpen, isBlocked, Acoustics.slope(s.range, Config.FullVolumeWithin), via[id], pass)
+        local slope = Acoustics.slope(s.range, Config.FullVolumeWithin)
+        local a = Acoustics.voice(L, S, ints, doorOpen, isBlocked, slope, via[id], pass)
+        if s.mu then a = keepSides(id, a, s.head, me.head, slope) end
         out.v[id], via[id] = a, a.via
     end
     for id in pairs(probes) do if not heard[id] then probes[id] = nil end end
     for id in pairs(rounds) do if not heard[id] then rounds[id] = nil end end
+    for id in pairs(sides) do if not heard[id] then sides[id] = nil end end
     for id in pairs(via) do if not heard[id] then via[id] = nil end end
     return out
 end
