@@ -30,7 +30,8 @@ window.VoiceAudio = (() => {
     const ECHO = {
         small: { decay: 0.35, pre: 0.004, wet: 0.22 },   // a bathroom, a cupboard: short and bright
         room:  { decay: 0.6,  pre: 0.010, wet: 0.16 },   // a bedroom, a kitchen
-        hall:  { decay: 1.2,  pre: 0.020, wet: 0.20 },   // a big lounge, a shop floor
+        // A big lounge, a shop floor: as a room. 1.2 s at 0.20 was far too much echo (13 Nov 2026).
+        hall:  { decay: 0.6,  pre: 0.010, wet: 0.16 },
         large: { decay: 2.2,  pre: 0.030, wet: 0.26 },   // a warehouse, a garage, a hangar
     };
     let echoIn = null;
