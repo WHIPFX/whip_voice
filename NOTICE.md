@@ -17,7 +17,8 @@ Third-party parts in this resource:
 - Downloaded when the server first starts, not shipped here: the LiveKit server (Apache 2.0) and Node.js (MIT, with
   the licences of its own parts in its download).
 - Installed by the setup wizard, not shipped here: the voice bot's npm packages (`service/voicebot/package-lock.json`),
-  each under its own licence: MIT, Apache 2.0, BSD, ISC, and the LGPL 3.0 for codec-parser.
+  each under its own licence: MIT, Apache 2.0, BSD, ISC, and the LGPL 3.0 for codec-parser. The MP3 decoder's
+  mpg123-decoder says MIT, but it is built from mpg123, which is under the LGPL 2.1.
 
 whip_core's `NOTICE.md` is the full notice for WHIP: the WHIP name and logo, the Rockstar Games material, and every
 third-party part, each with its licence.
