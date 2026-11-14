@@ -64,6 +64,8 @@ Config.MaxVoices = 100
 -- Use it again to put it away.
 Config.Megaphone = {
     rangeMultiplier = 6,   -- how many times further the voice carries (normal 8 m becomes 48 m)
+    carMuffle = 4,         -- dB a closed car takes off a megaphone voice (a normal one: Config.Muffle.car). A bullhorn
+                           -- is loud, so it gets through, dulled; each in a different car takes off 1.8 times this.
 }
 
 -- ---- The radio (an item: a walkie-talkie) -----------------------------------------------------
