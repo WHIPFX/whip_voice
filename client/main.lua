@@ -23,6 +23,7 @@ local joined = false     -- in the voice room
 local lastError = nil    -- why the last join failed or the connection went, for /voicecheck
 local heard = {}         -- [identity] = server id of the player that voice belongs to, or { ent = netId } (a world voice)
 local heardRange = {}    -- [identity] = how far that voice carries (metres), from the server
+local heardFx = {}       -- [identity] = its effect ('megaphone'), from the server: a megaphone gets through cars
 local talkers = {}       -- [identity] = true while the page hears them talking
 local anyTalkers = false
 local live = {}          -- [identity] = true while that speaker holds push-to-talk (the page says)
@@ -484,9 +485,12 @@ RegisterNetEvent('whip_voice:client:hear', function(msg)
     if type(msg) ~= 'table' then return end
     -- A player's voice comes from their server id; a world voice (a lore character, server/bots.lua) from an
     -- entity's network id.
-    for _, e in ipairs(msg.add or {}) do heard[e.id] = e.ent and { ent = e.ent } or e.src; heardRange[e.id] = e.range end
+    for _, e in ipairs(msg.add or {}) do
+        heard[e.id] = e.ent and { ent = e.ent } or e.src
+        heardRange[e.id], heardFx[e.id] = e.range, e.fx
+    end
     for _, id in ipairs(msg.remove or {}) do
-        heard[id], heardRange[id], talkers[id], live[id] = nil, nil, nil, nil
+        heard[id], heardRange[id], heardFx[id], talkers[id], live[id] = nil, nil, nil, nil, nil
         pedOf[id], envCache[id], envAt[id] = nil, nil, nil
     end
     anyTalkers, anyLive = next(talkers) ~= nil, next(live) ~= nil
@@ -606,7 +610,7 @@ startPose = function()
                             where[id] = { h.x, h.y, h.z }
                             local every = live[id] and ENV_LIVE_MS or ENV_QUIET_MS
                             if not envAt[id] or now - envAt[id] >= every then
-                                due[id] = { ped = ped, head = where[id], range = heardRange[id] }
+                                due[id] = { ped = ped, head = where[id], range = heardRange[id], loud = heardFx[id] == 'megaphone' }
                             end
                         else
                             where[id] = false            -- this game cannot place them: silent

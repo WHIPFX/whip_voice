@@ -26,6 +26,10 @@ Acoustics.COST = {
     building = { db = 22, hz = 450  },   -- inside a building the map knows nothing about, you outside
     car      = { db = 9,  hz = 1300 },   -- one of you in a closed car
     cars     = { db = 16, hz = 850  },   -- each in a different closed car
+    -- A MEGAPHONE gets through a car body: a bullhorn is loud, and its sound is the upper middle (500-3800 Hz, the honk
+    -- at 1800: html/js/fx.js), which the car's own cut at 1300 Hz took away nearly whole. Config.Megaphone.carMuffle.
+    carLoud  = { db = 4,  hz = 3000 },   -- a megaphone, one of you in a closed car
+    carsLoud = { db = 8,  hz = 2200 },   -- a megaphone, each in a different closed car
     underwaterListener = { db = 8,  hz = 500 },   -- your head underwater: everyone sounds far off
     underwaterSpeaker  = { db = 18, hz = 350 },   -- theirs underwater, yours not: a gurgle
 }
@@ -395,7 +399,7 @@ end
 
 --- How one speaker sounds to one listener.
 ---@param L table   { int, room, pos = {x,y,z}, veh, cabin (closed car), water }
----@param S table   the same, for the speaker
+---@param S table   the same, for the speaker, and `loud` while they speak through a megaphone
 ---@param interiors table  [int] = { pos, rot, conv, rooms = {[i] = {box}}, portals = {{from, to, kind, center}} }
 ---@param doorOpen fun(p: table): boolean|nil
 ---@param blocked boolean|nil  line of sight between the two heads is blocked (outdoors / unknown rooms)
@@ -454,11 +458,12 @@ function Acoustics.voice(L, S, interiors, doorOpen, blocked, slope, keep, pass)
     end
     if at and not p then p = dist(S.pos, at) + dist(at, L.pos) end
 
-    -- Cars: muffled between inside and outside a closed car; clear inside the same car.
+    -- Cars: muffled between inside and outside a closed car; clear inside the same car. A megaphone much less.
     if not (L.veh and L.veh ~= 0 and L.veh == S.veh) then
         local closed = (L.cabin and 1 or 0) + (S.cabin and 1 or 0)
-        if closed == 1 then add(m, Acoustics.COST.car, 'car')
-        elseif closed == 2 then add(m, Acoustics.COST.cars, 'two cars') end
+        local C = Acoustics.COST
+        if closed == 1 then add(m, S.loud and C.carLoud or C.car, S.loud and 'car (megaphone)' or 'car')
+        elseif closed == 2 then add(m, S.loud and C.carsLoud or C.cars, S.loud and 'two cars (megaphone)' or 'two cars') end
     end
 
     -- Water.

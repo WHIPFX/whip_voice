@@ -19,6 +19,8 @@ for k, db in pairs(Config.Muffle or {}) do
     if Acoustics.COST[k] then Acoustics.COST[k].db = db end
 end
 if Config.Muffle and Config.Muffle.car then Acoustics.COST.cars.db = Config.Muffle.car * 1.8 end
+local megaCar = tonumber(Config.Megaphone and Config.Megaphone.carMuffle)
+if megaCar then Acoustics.COST.carLoud.db, Acoustics.COST.carsLoud.db = megaCar, megaCar * 1.8 end
 
 local E = Config.Environment or {}
 local here = 0         -- the interior this player was in at the last pass (for /voicedebug)
@@ -179,7 +181,8 @@ end
 
 --- Everything for one pass.
 ---@param me table          { ped, head = {x,y,z} }
----@param speakers table    [identity] = { ped, head = {x,y,z}, range = metres } — the voices to work out now
+---@param speakers table    [identity] = { ped, head = {x,y,z}, range = metres, loud = through a megaphone } — the
+---                         voices to work out now
 ---@param heard table|nil   [identity] = anything, for every voice still heard (what is kept for the
 ---                         others: their line-of-sight check, the opening they came through). Default:
 ---                         the speakers.
@@ -194,6 +197,7 @@ function Environment.update(me, speakers, heard)
 
     for id, s in pairs(speakers) do
         local S = describe(s.ped, s.head)
+        S.loud = s.loud == true
         learn(S)
         -- A LINE-OF-SIGHT CHECK ONLY WHERE THE ROOM MAP CANNOT ANSWER: both outdoors, or a building
         -- involved that has no room map. Where every building involved has one, the doorways decide.
