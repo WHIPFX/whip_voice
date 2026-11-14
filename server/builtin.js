@@ -214,7 +214,7 @@ async function stopLeftover(pidFile, program) {
         // Not known which program it is: the pid file stays, for the next try (never a guess at killing).
         if (!p) return;
         if (path.resolve(p).toLowerCase() === path.resolve(program).toLowerCase()) {
-            try { process.kill(pid); } catch (_) { /* gone */ }
+            try { process.kill(pid, 'SIGKILL'); } catch (_) { /* gone */ }
             for (let i = 0; i < 25 && alive(pid); i++) await sleep(200);
             say(`stopped ${path.basename(program)} left running by an earlier start (pid ${pid})`);
         }
@@ -265,6 +265,23 @@ function spawnAllowed() {
     }
 }
 
+// GONE WITH FXSERVER, HOWEVER IT GOES. On Linux, LiveKit and the voice bot outlive an FXServer that stops or is killed
+// (txAdmin stops one with a signal, and it does not stop its resources first): adopted by init, their ports held,
+// until the next start stops them as leftovers (stopLeftover). Started through util-linux's `setpriv --pdeathsig`
+// (2.33 and newer), the kernel kills them the moment FXServer goes. Without it, the leftovers it is. (On Windows they
+// already go with it.)
+let pdeath = null;   // the words to start a program with, once known
+
+async function diesWithUs() {
+    if (WIN) return [];
+    if (pdeath === null) {
+        const r = await run('setpriv', ['--help']);
+        pdeath = r.code === 0 && r.out.includes('--pdeathsig') ? ['setpriv', '--pdeathsig', 'KILL', '--'] : [];
+        if (!pdeath.length) say('note: no setpriv --pdeathsig here, so a voice server FXServer leaves behind is stopped at its next start');
+    }
+    return pdeath;
+}
+
 // ============================================
 // A program kept running: started, restarted when it stops by itself, stopped with the resource
 // ============================================
@@ -290,9 +307,11 @@ class Kept {
         const log = logFile(o.log);
         log.on('error', () => { /* a log that cannot be written never stops the program */ });
         log.write(`\n---- ${new Date().toISOString()} starting ${o.name}\n`);
+        const via = await diesWithUs();
         let child;
         try {
-            child = spawn(o.exe, o.args || [], { cwd: o.cwd, env: o.env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+            child = spawn(via.length ? via[0] : o.exe, [...via.slice(1), ...(via.length ? [o.exe] : []), ...(o.args || [])],
+                { cwd: o.cwd, env: o.env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
         } catch (e) {
             if (deniedSpawn(e)) { this.fails = BACKOFF_S.length; this.down(NO_PERMISSION); return; }   // no use trying again
             this.down(`${o.name} could not start: ${e && e.message || e}`);
@@ -329,7 +348,7 @@ class Kept {
         } else if (this.child === child) {
             const why = `${o.name} did not answer${this.reason() ? ': ' + this.reason() : ''}`;
             this.child = null;                        // this one goes; down() decides whether another starts
-            try { child.kill(); } catch (_) { /* gone */ }
+            try { child.kill('SIGKILL'); } catch (_) { /* gone */ }
             this.down(why);
         }
     }
@@ -361,7 +380,7 @@ class Kept {
         this.stopping = true;
         const child = this.child;
         this.child = null;
-        if (child) { try { child.kill(); } catch (_) { /* gone */ } }
+        if (child) { try { child.kill('SIGKILL'); } catch (_) { /* gone */ } }
         fs.rm(this.o.pidFile, { force: true }, () => {});
     }
 }
