@@ -119,9 +119,24 @@ if (-not $Nssm) {
         throw "The NSSM download does not match its checksum (got $hash). Nothing was installed."
     }
     Good 'the download matches the official release'
+    # A copy Find-Nssm turned down may be the very program services are running (an older wizard made them from it),
+    # and Windows refuses to overwrite a running program: those services stop for the unpack and start again after,
+    # now on the checked copy.
+    $target = Join-Path $dir "nssm-$NssmVersion\win64\nssm.exe"
+    $holding = @()
+    if (Test-Path $target) {
+        $holding = @(Get-CimInstance Win32_Service | Where-Object {
+            $_.State -eq 'Running' -and $_.PathName -and
+            $_.PathName.IndexOf($target, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+        foreach ($s in $holding) {
+            Say "  stopping $($s.Name) while NSSM is replaced" 'Gray'
+            Stop-Service -Name $s.Name -Force -ErrorAction Stop
+        }
+    }
     Expand-Archive -Path $zip -DestinationPath $dir -Force
     Remove-Item $zip -Force
-    $Nssm = Join-Path $dir "nssm-$NssmVersion\win64\nssm.exe"
+    foreach ($s in $holding) { Start-Service -Name $s.Name -ErrorAction SilentlyContinue }
+    $Nssm = $target
 }
 # NSSM writes harmless messages to stderr (e.g. "service not running"); run those through cmd so
 # PowerShell 5.1 does not treat them as errors.
