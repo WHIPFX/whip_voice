@@ -33,7 +33,12 @@ local CELL = 2.0            -- metres per square
 local ABOVE = 1.5           -- a square's point: this high above its ground
 local CLIMB = 2.0           -- neighbours further apart in height than this are not joined (a wall top, a cliff)
 local MAX_SQUARES = 2000    -- squares one search looks at, at most (over as many passes as it takes)
-local EXPAND_RAYS = 24      -- rays one square's look round can take (eight joins and their grounds)
+-- A STEP IS TRIED WHEN THE SEARCH TAKES IT. Every square's eight joins were looked at as it was reached, up to 24 rays a
+-- square, and a pass's rays reached only a few squares: across a car park a search took over three seconds, the music
+-- muffled as if through a wall all that while and then suddenly clear (the voice simulator, 14 Nov 2026). Now a square's
+-- neighbours are only placed (their ground), and the join to one is looked at when the search goes on from it; one that
+-- is not joined there is reached from its best other neighbour already reached that is.
+local EXPAND_RAYS = 18      -- rays one step can take at most (its join, its neighbours' grounds, joins from the others)
 local KEEP_MS = 60000       -- what a ray found is kept this long (props, gates and doors come and go)
 local BAND = 6.0            -- a square's ground is looked for again by a search starting this much higher or lower
 local MAX_KEPT = 20000      -- answers kept; past this they are all forgotten and found again
@@ -159,35 +164,47 @@ function Ways.follow(way, from, to, own, budget)
     return { len = total, at = c, d = math.max(0, total - len(from, to)), turns = turns }
 end
 
--- A small binary heap of squares by their estimate.
-local function push(hf, hk, f, k)
-    local i = #hf + 1
-    hf[i], hk[i] = f, k
+-- A small binary heap of steps by their estimate: f, the square, the square it is reached from (false: a start), the
+-- metres to it that way. (Four arrays side by side: h.f, h.k, h.p, h.g.)
+local function swap(h, i, j)
+    h.f[i], h.f[j] = h.f[j], h.f[i]
+    h.k[i], h.k[j] = h.k[j], h.k[i]
+    h.p[i], h.p[j] = h.p[j], h.p[i]
+    h.g[i], h.g[j] = h.g[j], h.g[i]
+end
+
+local function push(h, f, k, p, g)
+    local i = #h.f + 1
+    h.f[i], h.k[i], h.p[i], h.g[i] = f, k, p, g
     while i > 1 do
         local up = i // 2
-        if hf[up] <= hf[i] then break end
-        hf[up], hf[i], hk[up], hk[i] = hf[i], hf[up], hk[i], hk[up]
+        if h.f[up] <= h.f[i] then break end
+        swap(h, up, i)
         i = up
     end
 end
 
-local function pop(hf, hk)
-    local f, k = hf[1], hk[1]
-    local n = #hf
-    hf[1], hk[1] = hf[n], hk[n]
-    hf[n], hk[n] = nil, nil
+local function pop(h)
+    local f, k, p, g = h.f[1], h.k[1], h.p[1], h.g[1]
+    local n = #h.f
+    swap(h, 1, n)
+    h.f[n], h.k[n], h.p[n], h.g[n] = nil, nil, nil, nil
     n = n - 1
     local i = 1
     while true do
         local l, r, s = i * 2, i * 2 + 1, i
-        if l <= n and hf[l] < hf[s] then s = l end
-        if r <= n and hf[r] < hf[s] then s = r end
+        if l <= n and h.f[l] < h.f[s] then s = l end
+        if r <= n and h.f[r] < h.f[s] then s = r end
         if s == i then break end
-        hf[s], hf[i], hk[s], hk[i] = hf[i], hf[s], hk[i], hk[s]
+        swap(h, s, i)
         i = s
     end
-    return f, k
+    return f, k, p, g
 end
+
+-- The neighbour step from one square to the next, by its dx, dy.
+local STEP = {}
+for _, nb in ipairs(NEIGHBOURS) do STEP[nb[1] * 3 + nb[2]] = nb end
 
 --- The squares a point reaches: those of the four nearest it it can see, { { cx, cy, point, metres } ... }; nil when
 --- no rays are left.
@@ -251,46 +268,79 @@ function Ways.step(s, budget, quota)
         s.goal = {}   -- [square] = metres from it to `to`
         for _, e in ipairs(ends) do s.goal[keyOf(e[1], e[2])] = e[4] end
         s.g, s.parent, s.sq, s.closed = {}, {}, {}, {}
-        s.hf, s.hk = {}, {}
+        s.heap = { f = {}, k = {}, p = {}, g = {} }
         s.best, s.looked = math.huge, 0
         for _, st in ipairs(starts) do
             local k = keyOf(st[1], st[2])
             if not s.g[k] or st[4] < s.g[k] then
-                s.g[k], s.parent[k], s.sq[k] = st[4], false, st
-                push(s.hf, s.hk, st[4] + len(st[3], to), k)
+                s.g[k], s.sq[k] = st[4], st
+                push(s.heap, st[4] + len(st[3], to), k, false, st[4])
             end
         end
         s.stage = 'search'
     end
 
     if s.stage == 'search' then
-        -- The shortest way from `from`'s squares to `to`'s (A*: metres so far + the straight line still to go).
-        local g, sq, closed, goal, hf, hk = s.g, s.sq, s.closed, s.goal, s.hf, s.hk
+        -- The shortest way from `from`'s squares to `to`'s (A*: metres so far + the straight line still to go). g: the
+        -- metres to a square reached, or the least yet to one waiting.
+        local g, sq, closed, goal, h = s.g, s.sq, s.closed, s.goal, s.heap
         local done = 0
         while true do
+            local hf = h.f
             if #hf == 0 or hf[1] >= s.best or hf[1] > s.maxLen or s.looked >= MAX_SQUARES then break end
             if done >= quota or budget.left < EXPAND_RAYS then return nil end   -- carried on next pass
-            local _, k = pop(hf, hk)
+            local f, k, pk, gk = pop(h)
             if not closed[k] then
-                closed[k] = true
-                s.looked, done = s.looked + 1, done + 1
                 local c = sq[k]
-                local gk = g[k]
-                if goal[k] and gk + goal[k] < s.best then s.best, s.bestK = gk + goal[k], k end
-                for _, nb in ipairs(NEIGHBOURS) do
-                    local nx, ny = c[1] + nb[1], c[2] + nb[2]
-                    local nk = keyOf(nx, ny)
-                    if not closed[nk] then
-                        local open = joined(c[1], c[2], nb, s.top, budget, now)
-                        -- (A join kept from an earlier search whose square's ground has since been looked for again
-                        -- and not found: not joined.)
-                        local gz = open and grounds[nk] and grounds[nk].z
-                        local q = gz and pointOf(nx, ny, gz) or nil
-                        if q and not avoided(s, q, c[3]) then
-                            local ng = gk + len(c[3], q)
-                            if not g[nk] or ng < g[nk] then
-                                g[nk], s.parent[nk], sq[nk] = ng, k, { nx, ny, q }
-                                push(hf, hk, ng + len(q, to), nk)
+                -- The step to it, looked at now (kept a minute). Not joined: from its best neighbour reached that is,
+                -- waiting its turn again by those metres; none: not reached (another may reach it later).
+                local ok = true
+                if pk then
+                    local pc = sq[pk]
+                    ok = joined(pc[1], pc[2], STEP[(c[1] - pc[1]) * 3 + (c[2] - pc[2])], s.top, budget, now)
+                    if ok == nil then push(h, f, k, pk, gk) return nil end
+                    if not ok then
+                        local bk, bg = nil, math.huge
+                        for _, nb in ipairs(NEIGHBOURS) do
+                            local qk = keyOf(c[1] + nb[1], c[2] + nb[2])
+                            if closed[qk] and qk ~= pk then
+                                local qc = sq[qk]
+                                local ng = g[qk] + len(qc[3], c[3])
+                                if ng < bg and not avoided(s, c[3], qc[3])
+                                    and joined(qc[1], qc[2], STEP[-nb[1] * 3 - nb[2]], s.top, budget, now) then
+                                    bk, bg = qk, ng
+                                end
+                            end
+                        end
+                        if bk then
+                            g[k] = bg
+                            push(h, bg + len(c[3], to), k, bk, bg)
+                        else
+                            g[k] = nil
+                        end
+                    end
+                end
+                if ok then
+                    closed[k] = true
+                    s.parent[k], g[k] = pk or false, gk
+                    s.looked, done = s.looked + 1, done + 1
+                    if goal[k] and gk + goal[k] < s.best then s.best, s.bestK = gk + goal[k], k end
+                    -- Its neighbours placed (their ground), to be stepped to in turn.
+                    local cz = c[3][3] - ABOVE
+                    for _, nb in ipairs(NEIGHBOURS) do
+                        local nx, ny = c[1] + nb[1], c[2] + nb[2]
+                        local nk = keyOf(nx, ny)
+                        if not closed[nk] then
+                            local gz = groundOf(nx, ny, s.top, budget, now)
+                            if gz and math.abs(gz - cz) <= CLIMB then
+                                local q = pointOf(nx, ny, gz)
+                                if not avoided(s, q, c[3]) then
+                                    local ng = gk + len(c[3], q)
+                                    if not g[nk] or ng < g[nk] then
+                                        g[nk], sq[nk] = ng, { nx, ny, q }
+                                        push(h, ng + len(q, to), nk, k, ng)
+                                    end
+                                end
                             end
                         end
                     end
