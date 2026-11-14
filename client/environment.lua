@@ -146,7 +146,7 @@ end
 local function isHit(hit) return hit == 1 or hit == true end
 
 --- One ray from `from` to `to`, ignoring this player's own ped. Answers: whether the game answered,
---- whether it hit, and where.
+--- whether it hit, where, and what it hit.
 ---
 --- ANSWERED IN THE SAME CALL, NOT LATER. These rays used to be started without waiting and read on a
 --- later pass, 200-500 ms on — and by then the game had thrown every answer away (Josh saw it on
@@ -157,16 +157,20 @@ local startProbe = StartExpensiveSynchronousShapeTestLosProbe or StartShapeTestL
 local function probe(from, to, flags)
     local h = startProbe(from[1], from[2], from[3], to[1], to[2], to[3], flags, PlayerPedId(), 7)
     if not h or h == 0 then return false, false, nil end
-    local status, hit, pos = GetShapeTestResult(h)
+    local status, hit, pos, _, ent = GetShapeTestResult(h)
     if status ~= 2 then return false, false, nil end
-    return true, isHit(hit), pos
+    return true, isHit(hit), pos, ent
 end
 
 --- Line of sight between two heads: the world and objects (1 + 16), not people or cars. No answer
 --- from the game keeps the last one.
-local function blocked(id, from, to)
-    local answered, hit = probe(from, to, 1 + 16)
-    if answered then probes[id] = hit end
+---
+--- THE VOICE'S OWN OBJECT IS NOT IN THE WAY. A speaker's sound comes from the middle of its prop, so the ray ends inside
+--- it and always hits it first: every speaker heard outdoors was muffled as if behind a wall (Josh, 14 Nov 2026). Its
+--- own object hit first means nothing stood between.
+local function blocked(id, from, to, own)
+    local answered, hit, _, ent = probe(from, to, 1 + 16)
+    if answered then probes[id] = hit and not (own and own ~= 0 and ent == own) end
     return probes[id] == true
 end
 
@@ -204,7 +208,7 @@ function Environment.update(me, speakers, heard)
         local mapped = (L.int ~= 0 or S.int ~= 0)
             and (L.int == 0 or interiors[L.int]) and (S.int == 0 or interiors[S.int])
         local isBlocked = false
-        if E.walls ~= false and not mapped then isBlocked = blocked(id, me.head, s.head) end
+        if E.walls ~= false and not mapped then isBlocked = blocked(id, me.head, s.head, s.ped) end
         local ints = {}
         if L.int ~= 0 then ints[L.int] = interiors[L.int] or nil end
         if S.int ~= 0 then ints[S.int] = interiors[S.int] or nil end
