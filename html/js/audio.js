@@ -148,7 +148,29 @@ window.VoiceAudio = (() => {
 
     /** How much of a song goes into the outdoor wash: falling far slower than the song itself, so close up it is mostly
      *  the song and far off mostly its wash. None indoors (the room's echo has it). */
-    const washOf = (v) => (echoNow ? 0 : WASH * Math.sqrt(v.loud));
+    const washOf = (v) => (echoNow ? 0 : WASH * Math.sqrt(v.loud) * v.share);
+
+    // SEVERAL PLACES OF ONE VOICE (a room or a stage of speakers: '<identity>#<n>', one chain each, all one track) ADD
+    // UP AS REAL SPEAKERS DO: by their power, +3 dB for each doubling, not as one sound copied in step, +6 dB (two
+    // speakers +6, four +12, thirty-two +30, which the page did by itself). Each place's share is sqrt(sum of g²) /
+    // sum of g, g its loudness here with its muffle: next to one speaker about 1 (that one is what you hear); amid N
+    // alike, 1/sqrt(N), so together they are sqrt(N) times one, the sum of their power.
+    function shareGroups() {
+        const sums = new Map();      // group -> [sum of g, sum of g²]
+        for (const v of voices.values()) {
+            if (!v.group || !v.plugged || !v.head) continue;
+            const g = v.loud * v.occTo;
+            const s = sums.get(v.group) || [0, 0];
+            s[0] += g;
+            s[1] += g * g;
+            sums.set(v.group, s);
+        }
+        for (const v of voices.values()) {
+            if (!v.group) continue;
+            const s = sums.get(v.group);
+            v.share = s && s[0] > 1e-6 ? Math.sqrt(s[1]) / s[0] : 1;
+        }
+    }
 
     // An echo unit only runs while it sounds (they are the heaviest part of the mix): one fading out is unplugged once
     // faded, both are unplugged outdoors, and one is plugged back in when wanted.
@@ -182,7 +204,7 @@ window.VoiceAudio = (() => {
         last.offTimer = setTimeout(() => { last.offTimer = null; if (last !== echo[echoLive] || !echoNow) wireUnit(last, false); }, ECHO_OFF_MS);
         sendLevel = want ? ECHO[want].wet : 0;
         for (const v of voices.values()) {
-            v.send.gain.setTargetAtTime(sendLevel * v.loud, t, 0.15);
+            v.send.gain.setTargetAtTime(sendLevel * v.loud * v.share, t, 0.15);
             if (v.wash) v.wash.gain.setTargetAtTime(washOf(v), t, 0.15);
         }
         wireWash();
@@ -333,7 +355,9 @@ window.VoiceAudio = (() => {
         const v = { source, filter, occ, bass, top, fix, panner, earL, earR, gain, send, analyser, buf: new Float32Array(analyser.fftSize),
             range: range || 8, at: null, path: null, head: null, talking: false, loudAt: 0, loud: 0, bassDb: 0, topDb: 0,
             live: false, plugged: false, unplugTimer: null, fx: null, input: !!input,
-            music: false, delay: null, wash: null, poseAt: 0 };   // (music: setSpace)
+            music: false, delay: null, wash: null, poseAt: 0,    // (music: setSpace)
+            // One place of a voice heard from several ('<identity>#<n>'): its group, and its share (shareGroups).
+            group: id.includes('#') ? id.slice(0, id.indexOf('#')) : null, share: 1, occTo: 1 };
         setHrtfFix(v);
         voices.set(id, v);
     }
@@ -432,9 +456,9 @@ window.VoiceAudio = (() => {
         const t = ctx.currentTime;
         if (v.head && lastPose) { const d = distanceOf(v, lastPose); v.loud = fade(d, v.range, v.full); tone(v, d); } else v.loud = 0;
         v.gain.gain.cancelScheduledValues(t);
-        v.gain.gain.setValueAtTime(v.loud, t);
+        v.gain.gain.setValueAtTime(v.loud * v.share, t);
         v.send.gain.cancelScheduledValues(t);
-        v.send.gain.setValueAtTime(sendLevel * v.loud, t);
+        v.send.gain.setValueAtTime(sendLevel * v.loud * v.share, t);
         if (v.wash) {
             v.wash.gain.cancelScheduledValues(t);
             v.wash.gain.setValueAtTime(washOf(v), t);
@@ -520,6 +544,7 @@ window.VoiceAudio = (() => {
             // Glided over about half a second: walking round a corner dulls the sound smoothly, never in steps.
             v.filter.frequency.setTargetAtTime(hz, t, 0.15);
             v.occ.gain.setTargetAtTime(g, t, 0.15);
+            v.occTo = g;                         // (its muffle, for its share among its group: shareGroups)
             // Heard from the doorway it comes out of, over the longer way round.
             v.at = a && Array.isArray(a.at) ? a.at : null;
             v.path = a && a.p > 0 ? a.p : null;
@@ -560,6 +585,7 @@ window.VoiceAudio = (() => {
         // `all: false` is a lighter pose carrying only some heads (the others are unchanged). A head of `false` (or
         // missing from a full pose) is a speaker this game cannot place: silent.
         const full = m.all !== false;
+        let grouped = false;
         for (const [id, v] of voices) {
             const head = m.s && m.s[id];
             if (head) v.head = head;
@@ -576,12 +602,21 @@ window.VoiceAudio = (() => {
             const d = distanceOf(v, lastPose);
             v.loud = fade(d, v.range, v.full);
             tone(v, d);
+            if (v.delay) setDelay(v, d, t);
+            if (v.group) { grouped = true; continue; }    // (its volume once its group's shares are known)
             v.gain.gain.setTargetAtTime(v.loud, t, 0.05);
             v.send.gain.setTargetAtTime(sendLevel * v.loud, t, 0.05);
-            if (v.delay) {
-                setDelay(v, d, t);
-                v.wash.gain.setTargetAtTime(washOf(v), t, 0.05);
-            }
+            if (v.wash) v.wash.gain.setTargetAtTime(washOf(v), t, 0.05);
+        }
+        // Places of one voice: their volumes by their shares (shareGroups), every place of a group that is plugged in
+        // and placed, the ones this pose did not move too (their share may have changed).
+        if (!grouped) return;
+        shareGroups();
+        for (const v of voices.values()) {
+            if (!v.group || !v.plugged || !v.head) continue;
+            v.gain.gain.setTargetAtTime(v.loud * v.share, t, 0.05);
+            v.send.gain.setTargetAtTime(sendLevel * v.loud * v.share, t, 0.05);
+            if (v.wash) v.wash.gain.setTargetAtTime(washOf(v), t, 0.05);
         }
     }
 
