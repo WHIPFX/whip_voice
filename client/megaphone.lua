@@ -13,18 +13,18 @@ local WATCH_MS = 250
 RegisterNetEvent('whip_voice:client:megaphone', function(on)
     if on then
         if up then return end
-        local ok, why = Whip.call('PlayEmote', 'megaphone')
+        local ok, why = Whip.core:PlayEmote('megaphone')
         if ok ~= true then
             -- Can't hold it up right now (in a car, armed, falling...): the server puts it down again.
             TriggerServerEvent('whip_voice:server:megaphoneDown')
-            Whip.call('Notify', type(why) == 'string' and why or 'You can\'t use the megaphone right now', 'error')
+            Whip.core:Notify(type(why) == 'string' and why or 'You can\'t use the megaphone right now', 'error')
             return
         end
         up = true
         CreateThread(function()
             while up do
                 Wait(WATCH_MS)
-                if up and Whip.call('IsEmoting') ~= 'megaphone' then
+                if up and Whip.core:IsEmoting() ~= 'megaphone' then
                     up = false
                     TriggerServerEvent('whip_voice:server:megaphoneDown')
                 end
@@ -33,11 +33,11 @@ RegisterNetEvent('whip_voice:client:megaphone', function(on)
     else
         if not up then return end
         up = false
-        if Whip.call('IsEmoting') == 'megaphone' then Whip.call('CancelEmote') end
+        if Whip.core:IsEmoting() == 'megaphone' then Whip.core:CancelEmote() end
     end
 end)
 
 -- whip_voice stopping: the megaphone goes down with it (the emote is whip_core's, so it would stay).
 AddEventHandler('onResourceStop', function(res)
-    if res == GetCurrentResourceName() and up and Whip.call('IsEmoting') == 'megaphone' then Whip.call('CancelEmote') end
+    if res == GetCurrentResourceName() and up and Whip.core:IsEmoting() == 'megaphone' then Whip.core:CancelEmote() end
 end)

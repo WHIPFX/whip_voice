@@ -169,7 +169,7 @@ end)
 --- Who is loaded right now, and who of them is down, for a whip_voice (re)start mid-session (and
 --- whip_core's: its events stopped while it was gone, so the down list is read afresh).
 function Voice.seedLoaded()
-    local players = Whip.call('GetPlayers', { light = true })
+    local players = Whip.core:GetPlayers({ light = true })
     if type(players) ~= 'table' then return end
     Voice.dead = {}
     for src, p in pairs(players) do

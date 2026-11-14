@@ -50,7 +50,7 @@ end
 
 RegisterCommand('voicedebug', function()
     CreateThread(function()
-        if not on and not Whip.call('Callback', 'whip_core:devtools:checkAccess') then return end
+        if not on and not Whip.core:Callback('whip_core:devtools:checkAccess') then return end
         on = not on
         print('[whip_voice] voice debug ' .. (on and 'on' or 'off'))
         while on do
