@@ -56,8 +56,8 @@ local function RegisterWithWhip()
         return
     end
 
-    -- The built-in voice server (no whip_voice_url in server.cfg): the relay's event, and starting it (server/builtin.lua).
-    VoiceBuiltin.register(core)
+    -- The built-in voice server (no whip_voice_url in server.cfg): started (server/builtin.lua).
+    VoiceBuiltin.start()
 
     -- A loaded player's pass into the voice room. whileDead: the dead still listen.
     core:SecureCallback('whip_voice:token', { rateLimit = 2000, burst = 3, whileDead = true },

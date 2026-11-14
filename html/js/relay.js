@@ -13,7 +13,7 @@
 
 (() => {
     const HOST = 'whip-voice.invalid';     // server/builtin.lua VoiceBuiltin.URL
-    const CHUNK = 12000;                   // base64 characters per piece: server/builtin.lua's SecureEvent takes this many
+    const CHUNK = 12000;                   // base64 characters per piece: server/builtin.js takes no longer
     const OPEN_TIMEOUT_MS = 15000;
     const CLOSE_TIMEOUT_MS = 2000;
     const RES = typeof GetParentResourceName === 'function' ? GetParentResourceName() : 'whip_voice';
@@ -69,7 +69,6 @@
             this.bufferedAmount = 0;
             this.onopen = null; this.onmessage = null; this.onerror = null; this.onclose = null;
             this._sock = nextSock++;
-            this._seq = 0;             // each piece to the server one up from the last: it notices one gone missing
             this._parts = [];
             sockets.set(this._sock, this);
             const u = new URL(url);
@@ -78,7 +77,7 @@
         }
 
         _out(op, data) {
-            queue.push([this._sock, op, data || '', ++this._seq]);
+            queue.push([this._sock, op, data || '']);
             flush();
         }
 
