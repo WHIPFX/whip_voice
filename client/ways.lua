@@ -229,8 +229,15 @@ end
 
 --- A new search for the way from `from` to `to`. `avoid`: { { x, y, r }, ... } areas its way may not go through (the
 --- second way round a music voice takes: through another opening than the first's corner, environment.lua).
+-- THE SQUARES' WAY IS LONGER THAN THE SOUND'S: it zigzags square to square, up to about a tenth longer once pulled
+-- straight. Looked for only within the voice's range, a way the sound takes at just under it was not found, so the sound
+-- came through the wall until a step brought the squares' way under, then jumped up (the voice simulator, 14 Nov 2026).
+-- So the search reaches SLACK further; a way longer than the range is silent anyway (the page's fade), so the change from
+-- the wall to it is where nothing is heard.
+local SLACK = 1.2
+
 function Ways.start(from, to, own, maxLen, avoid)
-    return { from = from, to = to, own = own, maxLen = tonumber(maxLen) or 40,
+    return { from = from, to = to, own = own, maxLen = (tonumber(maxLen) or 40) * SLACK,
              top = math.max(from[3], to[3]) + 2.0, stage = 'attach', avoid = avoid }
 end
 
