@@ -177,12 +177,6 @@ end
 --- Talking on the radio right now (the bar or the key, while the radio is on).
 function VoiceOnRadio() return onRadio end
 
--- FiveM's own voice chat: on Legacy its built-in voice (Mumble) runs by default on the same N key. Off while
--- whip_voice is connected, back on if it stops. On Enhanced it is off unless the server turns it on.
-local function builtInVoice(on)
-    if MumbleSetActive then pcall(MumbleSetActive, on) end
-end
-
 -- ---- Connecting -------------------------------------------------------------------------------
 
 -- Background noise suppression: the player's game takes fans, keyboards and hum out of their microphone before it is
@@ -210,8 +204,7 @@ local toldOff = false
 --- Ask the server for a pass and join. Nothing happens while a join is already on its way.
 local function connect()
     if connecting or joining or not wantVoice then return end
-    -- Another voice resource is the voice system: this one stays off, and FiveM's own
-    -- voice is left as it is (whip_core client/voice_system.lua).
+    -- Another voice resource is the voice system: this one stays off (whip_core client/voice_system.lua).
     local v = Whip.core:GetVoiceSystem()
     if type(v) == 'table' and v.resource ~= GetCurrentResourceName() then
         if not toldOff then print(('[whip_voice] %s is the voice system: whip_voice stays off'):format(tostring(v.resource))) end
@@ -367,7 +360,6 @@ RegisterNUICallback('state', function(d, cb)
     TriggerServerEvent('whip_voice:server:state', joined, d.speaking == true)
     if joined then
         lastError = nil
-        builtInVoice(false)
         sendRange()
         applyVolume()
         applyCallVolume()
@@ -735,9 +727,4 @@ end)
 AddEventHandler('whip_core:player:logout', function()
     wantVoice = false
     stopTalking()
-end)
-
-AddEventHandler('onResourceStop', function(res)
-    if res ~= GetCurrentResourceName() then return end
-    builtInVoice(true)   -- never leave the server with no voice at all
 end)
