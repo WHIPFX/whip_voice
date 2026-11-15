@@ -69,7 +69,7 @@ RegisterCommand('voicedebug', function()
                         local w = VoiceAt and VoiceAt[id]
                         if w then x, y, z, thing = w[1], w[2], w[3], true end
                     end
-                    if x then
+                    if x and y and z then
                         local clear = a.g == 0
                         if thing then
                             DrawMarker(28, x, y, z, 0, 0, 0, 0, 0, 0, 0.1, 0.1, 0.1, 255, 90, 200, 200, false, false, 2, false, (nil) --[[@as string]], (nil) --[[@as string]], false)
