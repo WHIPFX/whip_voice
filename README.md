@@ -27,6 +27,7 @@ whip_voice runs its own voice server alongside your FiveM server, so there's not
 - FXServer on Windows or Linux (64-bit): FiveM Legacy (artifact 38435 or newer) or GTA V Enhanced.
 - The voice ports open inbound: **UDP 7882-7893** and **TCP 7881**. On rented game hosting, your host must allow
   extra ports.
+- On FiveM Legacy, FiveM's own voice (Mumble) turned off: `set mumble_disableServer true` in `server.cfg`.
 
 ## Installation
 
@@ -34,11 +35,14 @@ WHIP's [txAdmin recipe](https://github.com/WHIPFX/txAdmin-recipe) installs and c
 by hand, put `whip_voice` in your `resources` folder and add these lines to `server.cfg` after `ensure whip_core`:
 
 ```cfg
+set mumble_disableServer true
 add_unsafe_child_process_permission whip_voice
 ensure whip_voice
 ```
 
-The permission line lets whip_voice start its voice server and voice bot, which run as separate programs.
+The permission line lets whip_voice start its voice server and voice bot, which run as separate programs. The Mumble
+line turns off FiveM Legacy's own voice, which players would otherwise talk on with the same key (on GTA V
+Enhanced it does nothing).
 
 ### Opening the voice ports
 

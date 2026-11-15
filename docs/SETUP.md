@@ -21,6 +21,9 @@ server.cfg and the voice ports open, and it works.
   `tar` and PowerShell to unpack them and read the firewall: nothing else.) Without it the console says so, with the
   line to add.
 - **The voice ports open, inbound** (below). Players' games send their voices to them, as they join through 30120.
+- **On FiveM Legacy, FiveM's own voice off**: `set mumble_disableServer true` in server.cfg (WHIP's Legacy recipe
+  writes it). Without it, players also talk over FiveM's Mumble voice, on the same N key. FiveM for GTAV Enhanced
+  has no Mumble ([below](#fivem-for-gtav-enhanced)).
 
 Nothing else: no domain name, no certificate, no service to install, no keys to copy. The signalling (who joins,
 who hears whom) goes through your FiveM server's own connection with each player; only the voices themselves go to
@@ -121,7 +124,7 @@ Changed the ports? Open those instead: `"Open voice ports.bat" -Udp 7982-7993 -T
 | the voice server stopped five times in a row | It can't run: often a port another program holds | `whip_voice\bin\logs\livekit.log` says why; free the port or change it (Settings) |
 | the voice bot: its packages could not be installed | This machine can't reach registry.npmjs.org | `whip_voice\bin\logs\voicebot-install.log` says why; restart whip_voice to try again |
 | *name* is the voice system, so whip_voice is off | Another voice resource started first, and only one can run | Take its `ensure` out of server.cfg and restart the server |
-| FiveM's own voice (Mumble) is on | Legacy's built-in voice runs, and players talk on it (same N key) until whip_voice connects them | Add `set mumble_disableServer true` to server.cfg (WHIP's Legacy recipe writes it) and restart the server |
+| FiveM's own voice (Mumble) is on | server.cfg has no `set mumble_disableServer true`, so players also talk over FiveM Legacy's Mumble voice | Add the line (WHIP's Legacy recipe writes it) and restart the server |
 | can hear but not talk | That player's game has no microphone: FiveM's box unanswered, or refused | They open F8 and click Allow in the box; refused earlier, they allow it in FiveM's settings and reconnect |
 | A Phone Call card: "only links starting with ... are accepted" | The recording is not on Fivemanage | Put the file in a resource and use `@resource/file.ogg` (below), upload it to Fivemanage, or add the site to `Config.VoiceBot.audioLinks` |
 | A Phone Call card: "there is no ..." / "cannot be read" | The `@resource/...` file is not where it says | Check the path inside the resource |
