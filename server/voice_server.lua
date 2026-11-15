@@ -11,8 +11,8 @@
 -- TWO WAYS (docs/SETUP.md):
 --   THE BUILT-IN VOICE SERVER (no whip_voice_url in server.cfg): whip_voice runs LiveKit itself, with keys of its own
 --   (server/builtin.js, server/builtin.lua). Nothing to set up but the voice ports.
---   YOUR OWN VOICE SERVER: these in server.cfg (the setup wizard, service\install.ps1, writes them):
---     whip_voice_url      where players' games connect:  wss://<this server's IP>, or wss://voice.your-domain.com
+--   YOUR OWN VOICE SERVER (LiveKit Cloud, or LiveKit on another machine): these in server.cfg:
+--     whip_voice_url      where players' games connect:  wss://voice.your-domain.com, or wss://<project>.livekit.cloud
 --     whip_voice_key      the API key
 --     whip_voice_secret   the API secret
 --     whip_voice_api      where this server reaches it   (default http://127.0.0.1:7880; set it only if the voice
@@ -90,10 +90,10 @@ local function explain(status, text)
             return VoiceBuiltin.why()
                 or ('the built-in voice server is not answering at %s (whip_voice/bin/logs/livekit.log says why)'):format(api())
         end
-        return ('the voice server is not answering at %s — is the "LiveKit" Windows service running?'):format(api())
+        return ('the voice server is not answering at %s — is it running, and is whip_voice_api its address?'):format(api())
     elseif status == 401 then
         if VoiceBuiltin.on then return 'the built-in voice server refused our key: restart whip_voice' end
-        return 'the voice server refused our key — whip_voice_key / whip_voice_secret in server.cfg do not match C:\\LiveKit\\config.yaml'
+        return 'the voice server refused our key — whip_voice_key / whip_voice_secret in server.cfg are not one of its key pairs'
     end
     local ok, body = pcall(json.decode, text or '')
     local msg = (ok and type(body) == 'table' and (body.msg or body.code)) or tostring(text or '')

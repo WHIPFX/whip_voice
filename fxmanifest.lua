@@ -10,8 +10,8 @@ whip_updates 'WHIPFX/whip_voice'   -- whip_core checks this repository's release
 -- HOW IT WORKS: each player's game sends their microphone to a voice server (LiveKit), which passes it on to
 -- the players near them. This FiveM server never carries audio; it decides who may hear whom. The voice server
 -- is BUILT IN (server/builtin.js runs it on this machine: nothing to set up but the voice ports), or your own
--- (whip_voice_url in server.cfg: service\install.ps1 sets one up). bin\ (the built-in one's downloads) and
--- service\ are never sent to players.
+-- (whip_voice_url in server.cfg: LiveKit Cloud, or LiveKit on another machine). bin\ (the built-in one's
+-- downloads) and service\ are never sent to players.
 
 shared_script '@whip_core/lib/satellite.lua'
 shared_script 'config.lua'

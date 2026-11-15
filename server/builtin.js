@@ -443,7 +443,7 @@ function liveKitConfig(s) {
     return lines.join('\n') + '\n';
 }
 
-/** Something already answers where LiveKit would listen? (The setup wizard's LiveKit service, say.) */
+/** Something already answers where LiveKit would listen? (Another FiveM server's whip_voice, say.) */
 async function answering(port) {
     try {
         const r = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1500) });
@@ -473,8 +473,8 @@ async function startLiveKit(s) {
     await firewall;
     if (await answering(s.apiPort)) {
         throw new Error(`something already answers on 127.0.0.1:${s.apiPort}, where the built-in voice server listens. `
-            + 'The setup wizard\'s "LiveKit" service? Either use it (put the lines the wizard writes into server.cfg), or stop '
-            + 'and uninstall it ("Setup voice server.bat" -Uninstall), or give the built-in one other ports (docs/SETUP.md)');
+            + 'Another FiveM server\'s whip_voice on this machine, say? Give this one other ports (whip_voice_api, '
+            + 'whip_voice_udp, whip_voice_tcp: docs/SETUP.md), or stop the program that holds it');
     }
     state.key = 'whip' + randomHex(6);
     state.secret = randomHex(32);

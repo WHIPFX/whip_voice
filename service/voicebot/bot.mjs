@@ -35,7 +35,8 @@
 // `maxBytes` and `maxSeconds`, or for music (a speaker's song) `musicBytes` and `musicSeconds`. Each one is read once
 // and kept for the next call.
 //
-// config.json (written by whip_voice's setup wizard): listen, token, maxCalls, audioLinks, maxSeconds, maxBytes,
+// config.json (whip_voice's built-in voice server writes one; with your own voice server, docs/SETUP.md): listen,
+// token, maxCalls, audioLinks, maxSeconds, maxBytes,
 // musicSeconds and musicBytes (optional: 600 s and 40 MB), and
 // "agent" (optional): the AI NPCs (agent/index.mjs: its own requests under /agent, the same token). With no
 // "agent", there are none and the service is the voice bot it always was.
@@ -83,7 +84,7 @@ function loadConfig() {
         process.exit(1);
     }
     if (typeof c.token !== 'string' || c.token.length < 24) {
-        console.error('[voicebot] config.json needs a token of 24 characters or more (the setup wizard makes one)');
+        console.error('[voicebot] config.json needs a token of 24 characters or more');
         process.exit(1);
     }
     const links = (Array.isArray(c.audioLinks) ? c.audioLinks : ['https://r2.fivemanage.com/'])

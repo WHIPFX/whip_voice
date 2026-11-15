@@ -12,12 +12,12 @@
 -- whip_voice_tcp, whip_voice_ip: docs/SETUP.md).
 --
 -- YOUR OWN VOICE SERVER instead (another machine, a domain name, LiveKit Cloud): its connection is not in this file
--- either. It lives in server.cfg because it holds a secret, and this file is sent to every player. The setup wizard
--- (service\Setup voice server.bat) writes these lines for you:
+-- either. It lives in server.cfg because it holds a secret, and this file is sent to every player:
 --
---     set whip_voice_url    "wss://<your server's IP>"     (or wss://voice.your-domain.com, set up with -Domain)
---     set whip_voice_key    "whip..."
+--     set whip_voice_url    "wss://voice.your-domain.com"     (or wss://your-project.livekit.cloud)
+--     set whip_voice_key    "API..."
 --     set whip_voice_secret "..."
+--     set whip_voice_api    "https://voice.your-domain.com"   (where this server reaches its API)
 --
 -- Use plain `set`, never `setr`: `setr` would send the secret to every player. With whip_voice_url set, the built-in
 -- voice server stays off.
@@ -180,9 +180,9 @@ Config.CrowdQuality = {
 -- and starts it by itself, in the background on its first start (its own Node.js and packages, about
 -- 100 MB in whip_voice\bin). `set whip_voice_bot false` in server.cfg leaves it out.
 --
--- With your own voice server, "Setup voice server.bat" installs it as a Windows service and writes its
--- two server.cfg lines (whip_voicebot_url, whip_voicebot_token); its settings are then its own
--- (C:\LiveKit\voicebot\config.json), not the ones below.
+-- With your own voice server, you run the bot yourself (docs/SETUP.md) and give server.cfg its two
+-- lines (whip_voicebot_url, whip_voicebot_token); its settings are then its own config.json, not the
+-- ones below.
 Config.VoiceBot = {
     WaitSeconds = 5,   -- a call past maxCalls waits this many seconds for a free one, then the card's "Couldn't call"
 

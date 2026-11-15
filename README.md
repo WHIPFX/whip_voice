@@ -79,9 +79,8 @@ quality. Ports, a fixed public address and the voice bot are set in `server.cfg`
 
 ## Using your own voice server
 
-To use a voice server on another machine, behind a domain name, or on LiveKit Cloud, set `whip_voice_url` and its
-keys in `server.cfg`; the built-in voice server then stays off. On Windows, `service/Setup voice server.bat` sets one
-up. See [docs/SETUP.md](docs/SETUP.md#your-own-voice-server).
+To use LiveKit Cloud or LiveKit on another machine, set `whip_voice_url` and its keys in `server.cfg`; the built-in
+voice server then stays off. See [docs/SETUP.md](docs/SETUP.md#your-own-voice-server).
 
 ## For developers
 

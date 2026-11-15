@@ -2,7 +2,7 @@
   "name": "whip-voicebot",
   "version": "1.0.0",
   "private": true,
-  "description": "whip_voice's voice bot: plays a recording into a voice line (installed by whip_voice's setup wizard)",
+  "description": "whip_voice's voice bot: plays a recording into a voice line (whip_voice sets it up)",
   "type": "module",
   "main": "bot.mjs",
   "engines": { "node": ">=20" },
