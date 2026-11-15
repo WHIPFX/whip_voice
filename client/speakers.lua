@@ -113,12 +113,16 @@ local function actionFor(v)
                 onSelect = function(ctx)
                     if not cur() then return ctx.refuse('That speaker is gone') end
                     local links = S.links or { 'https://r2.fivemanage.com/' }
-                    local answer = Whip.core:Input('Speaker', {
-                        { label = 'Song link', type = 'text', required = true,
-                          placeholder = tostring(links[1]) .. '.../song.mp3' },
+                    -- Typed into the prompt as its volume is (a capsule on a keyboard, where a link pastes; the
+                    -- on-screen keyboard on a pad), as text: a link is not a number. The server checks it.
+                    ctx.beginInput({
+                        numeric = false, max = 255, title = 'Song link',
+                        placeholder = tostring(links[1]) .. '.../song.mp3',
+                        onSubmit = function(text)
+                            text = tostring(text or ''):match('^%s*(.-)%s*$')
+                            if text ~= '' then send(id, 'link', text) end
+                        end,
                     })
-                    if type(answer) ~= 'table' or type(answer[1]) ~= 'string' then return end
-                    send(id, 'link', answer[1])
                 end,
             },
             {
