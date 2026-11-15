@@ -56,6 +56,10 @@ local function RegisterWithWhip()
         return
     end
 
+    -- FiveM's own voice must be off (server/check.lua): said at every start, in red.
+    local own, ownFix = VoiceCheck.fiveMVoice()
+    if own then say(('^1%s. Fix: %s^7'):format(own, ownFix)) end
+
     -- The built-in voice server (no whip_voice_url in server.cfg): started (server/builtin.lua).
     VoiceBuiltin.start()
 

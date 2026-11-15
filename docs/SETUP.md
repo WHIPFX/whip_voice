@@ -21,9 +21,10 @@ server.cfg and the voice ports open, and it works.
   `tar` and PowerShell to unpack them and read the firewall: nothing else.) Without it the console says so, with the
   line to add.
 - **The voice ports open, inbound** (below). Players' games send their voices to them, as they join through 30120.
-- **On FiveM Legacy, FiveM's own voice off**: `set mumble_disableServer true` in server.cfg (WHIP's Legacy recipe
-  writes it). Without it, players also talk over FiveM's Mumble voice, on the same N key. FiveM for GTAV Enhanced
-  has no Mumble ([below](#fivem-for-gtav-enhanced)).
+- **FiveM's own voice off**, or players also talk over it, on the same N key. On FiveM Legacy: `set
+  mumble_disableServer true` in server.cfg (WHIP's Legacy recipe writes it). On FiveM for GTAV Enhanced it is off
+  already: leave `voice_internal` and `voice_external_connect` out of server.cfg. Without that, whip_voice says so in
+  the console at every start, and `/voicecheck` fails.
 
 Nothing else: no domain name, no certificate, no service to install, no keys to copy. The signalling (who joins,
 who hears whom) goes through your FiveM server's own connection with each player; only the voices themselves go to
@@ -125,6 +126,7 @@ Changed the ports? Open those instead: `"Open voice ports.bat" -Udp 7982-7993 -T
 | the voice bot: its packages could not be installed | This machine can't reach registry.npmjs.org | `whip_voice\bin\logs\voicebot-install.log` says why; restart whip_voice to try again |
 | *name* is the voice system, so whip_voice is off | Another voice resource started first, and only one can run | Take its `ensure` out of server.cfg and restart the server |
 | FiveM's own voice (Mumble) is on | server.cfg has no `set mumble_disableServer true`, so players also talk over FiveM Legacy's Mumble voice | Add the line (WHIP's Legacy recipe writes it) and restart the server |
+| FiveM's own voice is on (server.cfg has voice_internal ...) | Enhanced: server.cfg turns FiveM's own voice on, so players also talk over it | Take the `voice_internal` or `voice_external_connect` line out and restart the server |
 | can hear but not talk | That player's game has no microphone: FiveM's box unanswered, or refused | They open F8 and click Allow in the box; refused earlier, they allow it in FiveM's settings and reconnect |
 | A Phone Call card: "only links starting with ... are accepted" | The recording is not on Fivemanage | Put the file in a resource and use `@resource/file.ogg` (below), upload it to Fivemanage, or add the site to `Config.VoiceBot.audioLinks` |
 | A Phone Call card: "there is no ..." / "cannot be read" | The `@resource/...` file is not where it says | Check the path inside the resource |
@@ -140,7 +142,7 @@ the server, so players never download them. Up to 2 minutes and 15 MB each (`Con
 whip_voice works the same, with these differences:
 
 - FiveM's own voice there is new, and off unless server.cfg turns it on (`voice_internal`, or `voice_external_connect`
-  for a separate voice server). Leave both out: only one voice system. `/voicecheck` can't see them, and
+  for a separate voice server; both set `sv_voiceChat`). Leave both out: only one voice system.
   `mumble_disableServer`, which turns Legacy's off, does nothing here.
 - FiveM's microphone box works as on Legacy: it takes the mouse only with the **F8 console** open (above).
 
