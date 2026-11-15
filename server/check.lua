@@ -34,6 +34,31 @@ local function openPorts(what)
     return ('allow %s inbound on your voice server\'s machine, and in its host\'s firewall if it has one'):format(what)
 end
 
+--- FiveM's own voice running beside whip_voice: what is wrong and its fix, or nil. Players would talk on it too,
+--- with the same N key. Both convars are read once, when FXServer starts (tried on FXServer 38435 and Enhanced b177):
+---   Legacy    Mumble, on unless server.cfg has `set mumble_disableServer true` (a requirement; WHIP's Legacy recipe
+---             writes it). Unset, GetConvar gives the default.
+---   Enhanced  FiveM's new voice, off unless server.cfg turns it on: `voice_internal` and `voice_external_connect` (commands)
+---             both set sv_voiceChat true. `sv_mumble` alone does not: it is only the old API on top of it.
+---@return string|nil problem
+---@return string|nil fix
+function VoiceCheck.fiveMVoice()
+    if GetConvar('whip_platform', 'legacy'):lower() == 'enhanced' then
+        local on = GetConvar('sv_voiceChat', 'false'):lower()
+        if on == 'true' or on == '1' then
+            return 'FiveM\'s own voice is on (server.cfg has voice_internal or voice_external_connect): players also talk over it',
+                'take the voice_internal or voice_external_connect line out of server.cfg and restart the server'
+        end
+    else
+        local off = GetConvar('mumble_disableServer', 'false'):lower()
+        if off ~= 'true' and off ~= '1' then
+            return 'FiveM\'s own voice (Mumble) is on: players also talk over it, with the same key',
+                'add "set mumble_disableServer true" to server.cfg and restart the server'
+        end
+    end
+    return nil
+end
+
 local asks = {}        -- [nonce] = { [src] = answer } while players are being asked
 local lastNonce = 0
 
@@ -79,15 +104,9 @@ function VoiceCheck.run(say)
         good('whip_voice is the voice system')
     end
 
-    -- FiveM's own voice. Legacy runs a Mumble server unless server.cfg turns it off (required; WHIP's recipe writes the
-    -- line), and players would talk on it too, with the same N key. Enhanced's is off unless server.cfg turns it on
-    -- (voice_internal, voice_external_connect: commands, not convars, so not checked here; docs/SETUP.md says to
-    -- leave them out).
-    local mumbleOff = GetConvar('mumble_disableServer', 'false'):lower()
-    if GetConvar('whip_platform', 'legacy'):lower() ~= 'enhanced' and mumbleOff ~= 'true' and mumbleOff ~= '1' then
-        bad('FiveM\'s own voice (Mumble) is on: players also talk over it, with the same key',
-            'add "set mumble_disableServer true" to server.cfg and restart the server')
-    end
+    -- FiveM's own voice, off (also said at every start: server/main.lua).
+    local own, ownFix = VoiceCheck.fiveMVoice()
+    if own then bad(own, ownFix) end
 
     -- 2. The voice server (built in, or server.cfg's), and it taking our key.
     local s = VoiceServer.settings()
