@@ -1,5 +1,5 @@
 -- Voice bots: a recording heard on a line as if someone on it were talking. A lore character phoning a player is a
--- call line whose other end is a bot: the voice bot service (the built-in voice server's, or the setup wizard's) joins the voice room under
+-- call line whose other end is a bot: the voice bot service (the built-in voice server's, or one you run) joins the voice room under
 -- an identity of its own and plays a recording into the line, so a phone on speaker and the people near it work as for
 -- any call.
 --
@@ -50,7 +50,7 @@
 --
 -- The built-in voice server (server/builtin.js) sets up and starts the service itself, with a token of its own. With
 -- your own voice server, server.cfg: whip_voicebot_token (set, never setr: a shared secret with the service),
--- whip_voicebot_url (default http://127.0.0.1:7899). The setup wizard writes both.
+-- whip_voicebot_url (default http://127.0.0.1:7899), as in the bot's config.json (docs/SETUP.md).
 
 VoiceBots = { byKey = {} }
 
@@ -59,8 +59,8 @@ local count = 0
 
 local function say(fmt, ...) print(('[whip_voice] voice bot: ' .. fmt):format(...)) end
 
--- The built-in voice server's bot (server/builtin.js starts it, with a token of its own every start), or the setup
--- wizard's (server.cfg).
+-- The built-in voice server's bot (server/builtin.js starts it, with a token of its own every start), or yours
+-- (server.cfg).
 local function serviceUrl()
     if VoiceBuiltin.on then return (VoiceBuiltin.bot()) or 'http://127.0.0.1:7899' end
     return (GetConvar('whip_voicebot_url', 'http://127.0.0.1:7899'):gsub('/+$', ''))
@@ -76,7 +76,7 @@ end
 --- Why there is no voice bot to ask, in words.
 local function noBot()
     if VoiceBuiltin.on then return VoiceBuiltin.botWhy() end
-    return 'whip_voicebot_token is not set in server.cfg (the setup wizard writes it)'
+    return 'whip_voicebot_token is not set in server.cfg (docs/SETUP.md: the voice bot)'
 end
 
 --- The voice room's address for the service, on this machine (the API's, as ws://).

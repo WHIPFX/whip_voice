@@ -7,7 +7,7 @@ rem and takes away any block Windows put on the voice server (someone answered C
 rem It asks Windows for administrator rights, then runs firewall.ps1 and keeps the window open so you can read it.
 rem Ports changed in server.cfg (whip_voice_udp, whip_voice_tcp)? From a command prompt here:
 rem     "Open voice ports.bat" -Udp 7982-7993 -Tcp 7981
-rem Your own voice server (the setup wizard) opens its ports itself: this is not for it.
+rem Your own voice server on another machine: open its ports there, not with this.
 
 net session >nul 2>&1
 if %errorlevel% neq 0 (
