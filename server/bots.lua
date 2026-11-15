@@ -106,7 +106,7 @@ local function send(method, path, body)
         { ['Content-Type'] = 'application/json', Authorization = 'Bearer ' .. token })
 end
 
-local function why(status, data)
+local function serviceWhy(status, data)
     if status == 0 then
         return (data and data.error) or (VoiceBuiltin.on and VoiceBuiltin.botWhy())
             or 'the voice bot service is not running (whip_voice setup: the voice bot step)'
@@ -197,7 +197,7 @@ function VoiceBots.inWorld(players)
     local out
     for key, b in pairs(VoiceBots.byKey) do
         local w = b.world
-        local m, spread = nil, 0
+        local m, spread
         if w then m, spread = middleOf(w) end
         if m then
             if not out then out = {}; for i = 1, #players do out[i] = players[i] end end
@@ -337,7 +337,7 @@ function VoiceBots.create(owner, spec)
         Wait(500)
     until GetGameTimer() > deadline
     if status ~= 200 or not (data and data.ok) then
-        return nil, status == 429 and 'every voice bot line is in use' or why(status, data)
+        return nil, status == 429 and 'every voice bot line is in use' or serviceWhy(status, data)
     end
     count = count + 1
     local key = 'bot:' .. count
@@ -369,7 +369,7 @@ function VoiceBots.say(key, audio, onDone, opts)
     local loop = opts.loop == true
     local status, data = request('POST', '/calls/' .. b.identity .. '/play', { audio = a, loop = loop or nil,
         music = opts.music == true or nil, fadeIn = math.max(0, math.min(30000, math.floor(tonumber(opts.fadeIn) or 0))) })
-    if status ~= 200 or not (data and data.ok) then return nil, why(status, data) end
+    if status ~= 200 or not (data and data.ok) then return nil, serviceWhy(status, data) end
     local duration = tonumber(data.duration) or 0
     -- Another line asked for meanwhile (the request waits on the service), or the voice gone: this one is over as it
     -- starts, and its owner hears so. Kept only while it is still the voice's last.
@@ -414,7 +414,7 @@ function VoiceBots.stop(key, fadeMs)
         b.stopping = nil
         return false, 'the voice bot is older than 1.5.0 and cannot stop a recording: run the voice setup again'
     end
-    if status ~= 200 then b.stopping = nil; return false, why(status, data) end
+    if status ~= 200 then b.stopping = nil; return false, serviceWhy(status, data) end
     return true
 end
 
@@ -462,7 +462,7 @@ function VoiceBots.play(key, onDone)
     local status, data = request('POST', '/calls/' .. b.identity .. '/play')
     if status ~= 200 then
         VoiceBots.remove(key, 'failed')
-        return nil, why(status, data)
+        return nil, serviceWhy(status, data)
     end
     -- Asked how far it got until it is done: it waits up to 3 s for its listener first, then plays.
     CreateThread(function()
@@ -748,7 +748,7 @@ end)
 
 exports('VoiceBotStatus', function()
     local status, data = request('GET', '/health')
-    if status ~= 200 or not data then return false, why(status, data) end
+    if status ~= 200 or not data then return false, serviceWhy(status, data) end
     return data
 end)
 

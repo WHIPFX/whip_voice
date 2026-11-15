@@ -669,6 +669,7 @@ startPose = function()
                             -- (A world voice may come from something that is not a ped: its middle, a little up; a
                             -- fixed spot's object, the middle of it; a fixed spot with no object here, the spot; a
                             -- spot on an entity, the object riding there or the spot.)
+                            ---@cast spot -nil   -- (no ped: then there is a spot, the test above)
                             local h
                             if not ped then h = vector3(spot[1] + 0.0, spot[2] + 0.0, spot[3] + 0.0)
                             elseif IsEntityAPed(ped) then h = GetPedBoneCoords(ped, HEAD_BONE, 0.0, 0.0, 0.0)

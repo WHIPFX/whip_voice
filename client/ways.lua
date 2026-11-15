@@ -392,6 +392,7 @@ function Ways.step(s, budget, quota)
                 local c = sq[k]
                 -- The step to it, looked at now (kept a minute). Not joined: from its best neighbour reached that is,
                 -- waiting its turn again by those metres; none: not reached (another may reach it later).
+                ---@type boolean|nil
                 local ok = true
                 if pk then
                     local pc = sq[pk]

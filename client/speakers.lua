@@ -174,7 +174,7 @@ local function take(views)
         if type(v) == 'table' and v.id then now[v.id] = v end
     end
     list = now
-    for id, key in pairs(mounted) do
+    for id in pairs(mounted) do
         if not now[id] then
             Whip.core:RemoveAction('speaker:' .. id)
             mounted[id] = nil

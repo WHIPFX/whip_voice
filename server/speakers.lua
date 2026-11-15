@@ -418,7 +418,7 @@ local function restore()
                         { speakerLink = s.link, speakerVolume = s.volume, speakerRange = s.range },
                         'their speaker, back after a restart')
                 end)
-                given, why = okG and g, okG and w or g
+                given, why = okG and g and true or false, tostring(okG and w or g)
             end
             if given then
                 back = back + 1

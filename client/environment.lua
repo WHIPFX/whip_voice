@@ -245,7 +245,7 @@ local function wayRound(from, to, hitAt, own)
         return { bx, by, bz + step }
     end
     -- Does the sound get from `from` to `to` by w? nil: no rays left.
-    local function via(w)
+    local function reaches(w)
         if closeRays.left < 2 then return nil end
         closeRays.left = closeRays.left - 1
         local a1, h1, _, e1 = probe(from, w, 1 + 16, own)
@@ -257,7 +257,7 @@ local function wayRound(from, to, hitAt, own)
     for _, step in ipairs(ROUND_STEPS) do
         for side = 1, 3 do
             local w = point(side, step)
-            local got = via(w)
+            local got = reaches(w)
             if got == nil then return nil end
             if got then return w end
         end
