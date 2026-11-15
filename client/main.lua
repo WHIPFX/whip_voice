@@ -626,8 +626,8 @@ local function pedFor(src)
         if ent == 0 or not DoesEntityExist(ent) then return nil end
         return ent
     end
-    local player = Whip.playerIndex(src)
-    if not player then return nil end
+    local player = GetPlayerFromServerId(src)
+    if player == -1 then return nil end
     local ped = GetPlayerPed(player)
     if ped == 0 or not DoesEntityExist(ped) then return nil end
     return ped
