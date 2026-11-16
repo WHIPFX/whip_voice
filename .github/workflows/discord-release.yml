@@ -1,0 +1,26 @@
+# Posts each release of this resource to WHIP's Discord with its changelog (by the workflow in WHIPFX/txAdmin-recipe).
+# A "## Changelog" section in the release's notes is posted instead of the generated one. To post a release again:
+# Actions > Discord release > Run workflow, with its tag.
+name: Discord release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release's tag
+        required: true
+
+jobs:
+  discord:
+    # Not from a fork (it has no webhook), and not for a pre-release
+    if: ${{ github.repository_owner == 'WHIPFX' && !github.event.release.prerelease }}
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: WHIPFX/txAdmin-recipe/.github/workflows/discord-release.yml@main
+    with:
+      tag: ${{ github.event.release.tag_name || inputs.tag }}
+    secrets:
+      webhook: ${{ secrets.WHIP_DISCORD_RELEASES }}
