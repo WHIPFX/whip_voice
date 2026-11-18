@@ -1,0 +1,16 @@
+# When this resource publishes a release, the WHIP txAdmin recipes move to it: WHIPFX/txAdmin-recipe's Recipe update
+# checks every resource's latest release and pushes both recipes to main. Run workflow here starts it again.
+name: Recipes
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  recipes:
+    # Not from a fork (it has no secrets), and not for a pre-release (the recipes take the latest release)
+    if: ${{ github.repository_owner == 'WHIPFX' && !github.event.release.prerelease }}
+    uses: WHIPFX/txAdmin-recipe/.github/workflows/tell-recipes.yml@main
+    secrets:
+      app_key: ${{ secrets.WHIP_RECIPE_APP_KEY }}
